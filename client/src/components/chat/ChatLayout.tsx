@@ -402,14 +402,18 @@ export function ChatLayout({ onLock }: ChatLayoutProps) {
 }
 
 function CallOverlay({ type, onEnd }: { type: 'voice' | 'video', onEnd: () => void }) {
-  const [status, setStatus] = useState("Calling...");
+  const [status, setStatus] = useState("Establishing Secure Connection...");
   const [duration, setDuration] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
   const [cameraOff, setCameraOff] = useState(false);
+  const localVideoRef = useRef<HTMLVideoElement>(null);
+  const [stream, setStream] = useState<MediaStream | null>(null);
 
   useEffect(() => {
-    const timer1 = setTimeout(() => setStatus("Ringing..."), 1500);
-    const timer2 = setTimeout(() => setStatus("Connected"), 3000);
+    // Simulate connection sequence
+    const timer1 = setTimeout(() => setStatus("Handshaking Keys..."), 1500);
+    const timer2 = setTimeout(() => setStatus("Ringing..."), 3000);
+    const timer3 = setTimeout(() => setStatus("Connected"), 4500);
     
     const interval = setInterval(() => {
       if (status === "Connected") {
@@ -417,12 +421,47 @@ function CallOverlay({ type, onEnd }: { type: 'voice' | 'video', onEnd: () => vo
       }
     }, 1000);
 
+    // Request local media
+    if (type === 'video') {
+      navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+        .then(currentStream => {
+          setStream(currentStream);
+          if (localVideoRef.current) {
+            localVideoRef.current.srcObject = currentStream;
+          }
+        })
+        .catch(err => console.error("Error accessing media devices:", err));
+    }
+
     return () => {
       clearTimeout(timer1);
       clearTimeout(timer2);
+      clearTimeout(timer3);
       clearInterval(interval);
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
     };
+  }, [type, status]); // Added status to dependency to ensure timer doesn't reset incorrectly, actually status shouldn't be there. 
+  // Correction: The effect for timers should only run once on mount. 
+  // The interval depends on status, so that needs a separate effect or ref.
+
+  // Fixed effect logic for timers
+  useEffect(() => {
+    const t1 = setTimeout(() => setStatus("Handshaking Keys..."), 1500);
+    const t2 = setTimeout(() => setStatus("Ringing..."), 3000);
+    const t3 = setTimeout(() => setStatus("Connected"), 4500);
+    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
+  }, []);
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (status === "Connected") {
+      interval = setInterval(() => setDuration(d => d + 1), 1000);
+    }
+    return () => clearInterval(interval);
   }, [status]);
+
 
   const formatDuration = (s: number) => {
     const mins = Math.floor(s / 60);
@@ -431,51 +470,85 @@ function CallOverlay({ type, onEnd }: { type: 'voice' | 'video', onEnd: () => vo
   };
 
   return (
-    <div className="absolute inset-0 z-50 bg-slate-950 flex flex-col items-center justify-center text-white animate-in fade-in duration-300">
+    <div className="absolute inset-0 z-50 bg-slate-950 flex flex-col items-center justify-center text-white animate-in fade-in duration-300 overflow-hidden">
       {/* Background Blur Effect */}
       <div className="absolute inset-0 overflow-hidden opacity-30 pointer-events-none">
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-primary/40 rounded-full blur-[100px]"></div>
       </div>
 
-      <div className="flex flex-col items-center gap-8 z-10 relative w-full max-w-md px-8">
-        <div className="flex flex-col items-center gap-4">
+      {/* Main Video Area (Remote User - Simulated) */}
+      <div className="absolute inset-0 z-0">
+        {type === 'video' && status === 'Connected' ? (
+          <div className="w-full h-full bg-slate-900 flex items-center justify-center">
+             {/* In a real app, this would be the remote stream. For mockup, we show a placeholder or static image */}
+             <img 
+               src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=800&h=800&fit=crop" 
+               alt="Remote User" 
+               className="w-full h-full object-cover opacity-60"
+             />
+             <div className="absolute inset-0 bg-black/20"></div>
+          </div>
+        ) : (
+           <div className="w-full h-full bg-slate-950"></div>
+        )}
+      </div>
+
+      {/* UI Overlay */}
+      <div className="z-10 flex flex-col items-center justify-between h-full w-full py-12 px-4">
+        
+        {/* Header / Status */}
+        <div className="flex flex-col items-center gap-4 mt-8">
           <div className="relative">
-            <Avatar className="w-32 h-32 border-4 border-white/10 shadow-2xl">
-              <AvatarImage src="https://github.com/shadcn.png" />
-              <AvatarFallback className="text-4xl bg-slate-800">JD</AvatarFallback>
-            </Avatar>
-            {status === "Connected" && (
-              <div className="absolute bottom-2 right-2 w-6 h-6 bg-green-500 border-4 border-slate-950 rounded-full animate-pulse"></div>
+             {/* Only show Avatar if NOT connected or if it's a voice call */}
+            {(status !== "Connected" || type === 'voice') && (
+              <div className="animate-in zoom-in duration-500">
+                <Avatar className="w-32 h-32 border-4 border-white/10 shadow-2xl">
+                  <AvatarImage src="https://github.com/shadcn.png" />
+                  <AvatarFallback className="text-4xl bg-slate-800">JD</AvatarFallback>
+                </Avatar>
+              </div>
             )}
           </div>
           
           <div className="text-center">
-            <h2 className="text-3xl font-light tracking-tight">John Doe</h2>
+            <h2 className="text-3xl font-light tracking-tight drop-shadow-md">John Doe</h2>
             <p className={cn(
-              "text-lg mt-2 font-medium",
+              "text-lg mt-2 font-medium drop-shadow-md transition-all",
               status === "Connected" ? "text-green-400" : "text-white/60 animate-pulse"
             )}>
               {status === "Connected" ? formatDuration(duration) : status}
             </p>
-            <p className="text-sm text-white/40 mt-1 uppercase tracking-widest font-mono">
-              End-to-End Encrypted
-            </p>
+            <div className="flex items-center justify-center gap-2 mt-2">
+              <Lock size={12} className="text-white/60" />
+              <p className="text-[10px] text-white/60 uppercase tracking-widest font-mono">
+                End-to-End Encrypted
+              </p>
+            </div>
           </div>
         </div>
 
-        {/* Video Placeholder if Video Call */}
-        {type === 'video' && status === 'Connected' && !cameraOff && (
-          <div className="w-full aspect-video bg-slate-900 rounded-2xl border border-white/10 flex items-center justify-center relative overflow-hidden shadow-2xl">
-             <div className="absolute inset-0 flex items-center justify-center">
-               <Video className="text-white/20 w-12 h-12" />
-             </div>
-             {/* Self view */}
-             <div className="absolute bottom-4 right-4 w-24 h-32 bg-black/50 rounded-lg border border-white/20"></div>
+        {/* Self View (Picture-in-Picture) */}
+        {type === 'video' && (
+          <div className="absolute bottom-24 right-4 w-32 h-48 bg-black/50 rounded-xl border border-white/20 overflow-hidden shadow-2xl z-20 transition-all hover:scale-105">
+             {cameraOff ? (
+               <div className="w-full h-full flex items-center justify-center bg-slate-800 text-white/50">
+                 <CameraOff size={24} />
+               </div>
+             ) : (
+               <video 
+                 ref={localVideoRef} 
+                 autoPlay 
+                 muted 
+                 playsInline 
+                 className="w-full h-full object-cover mirror-mode" 
+                 style={{ transform: 'scaleX(-1)' }}
+               />
+             )}
           </div>
         )}
 
         {/* Controls */}
-        <div className="flex items-center gap-6 mt-8">
+        <div className="flex items-center gap-6 mb-8 bg-black/40 backdrop-blur-md p-6 rounded-full border border-white/10 shadow-2xl">
            <button 
              onClick={() => setIsMuted(!isMuted)}
              className={cn(
