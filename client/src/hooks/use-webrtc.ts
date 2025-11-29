@@ -30,6 +30,17 @@ export function useWebRTC() {
   const signalingRef = useRef<BroadcastChannel | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
 
+  // Helper to serialize ICE candidate for transmission
+  const serializeCandidate = (candidate: RTCIceCandidate): RTCIceCandidateInit | null => {
+    if (!candidate) return null;
+    return {
+      candidate: candidate.candidate,
+      sdpMLineIndex: candidate.sdpMLineIndex,
+      sdpMid: candidate.sdpMid,
+      usernameFragment: candidate.usernameFragment
+    };
+  };
+
   // Initialize Signaling Channel (Mocking WebSocket with BroadcastChannel for Tab-to-Tab P2P)
   useEffect(() => {
     signalingRef.current = new BroadcastChannel('webrtc_signaling_channel');
@@ -47,11 +58,15 @@ export function useWebRTC() {
       } 
       else if (data.type === 'answer') {
         if (peerRef.current) {
-          await peerRef.current.setRemoteDescription(new RTCSessionDescription(data.sdp));
+          try {
+            await peerRef.current.setRemoteDescription(new RTCSessionDescription(data.sdp));
+          } catch (e) {
+            console.error('Error setting remote description', e);
+          }
         }
       } 
       else if (data.type === 'ice-candidate') {
-        if (peerRef.current) {
+        if (peerRef.current && data.candidate) {
           try {
             await peerRef.current.addIceCandidate(new RTCIceCandidate(data.candidate));
           } catch (e) {
@@ -92,12 +107,13 @@ export function useWebRTC() {
       // 3. Add Tracks
       stream.getTracks().forEach(track => peer.addTrack(track, stream));
 
-      // 4. Handle ICE Candidates
+      // 4. Handle ICE Candidates - SERIALIZE BEFORE SENDING
       peer.onicecandidate = (event) => {
         if (event.candidate) {
+          const serialized = serializeCandidate(event.candidate);
           signalingRef.current?.postMessage({
             type: 'ice-candidate',
-            candidate: event.candidate,
+            candidate: serialized,
             from: 'caller'
           });
         }
@@ -147,12 +163,13 @@ export function useWebRTC() {
       // 3. Add Tracks
       stream.getTracks().forEach(track => peer.addTrack(track, stream));
 
-      // 4. Handle ICE Candidates
+      // 4. Handle ICE Candidates - SERIALIZE BEFORE SENDING
       peer.onicecandidate = (event) => {
         if (event.candidate) {
+          const serialized = serializeCandidate(event.candidate);
           signalingRef.current?.postMessage({
             type: 'ice-candidate',
-            candidate: event.candidate,
+            candidate: serialized,
             from: 'responder'
           });
         }
