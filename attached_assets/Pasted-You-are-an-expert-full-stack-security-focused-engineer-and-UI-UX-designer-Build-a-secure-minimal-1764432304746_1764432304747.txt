@@ -1,0 +1,487 @@
+You are an expert full-stack, security-focused engineer and UI/UX designer.
+
+Build a secure, minimal, and beautifully discreet web-based messaging app that is designed and tested specifically for Google Chrome:
+
+Must work flawlessly in Chrome on desktop (Windows/macOS/Linux).
+
+Must work flawlessly in Chrome on mobile (Android, and Chrome-based browsers on iOS).
+
+The app must look completely harmless and non-chat-related to anyone who doesn’t know the secret.
+
+This is a private, hidden, two-person-only communication tool.
+
+1. Core Concept & Secrecy
+
+The app is a two-person only, end-to-end style encrypted messenger.
+
+Only two specific users exist: me and one trusted contact.
+
+There is no sign-up, no public onboarding, no visible “chat app” branding.
+
+To any casual observer, it should look like a normal, utility-like web page in Chrome.
+
+The main goals:
+
+Secrecy: It must be hard to tell it’s a messenger at all.
+
+Privacy: Content is end-to-end style encrypted and never shown in plaintext to the backend.
+
+Chrome-first: Layout, touch targets, and performance must be tuned for Chrome on both desktop and mobile screens.
+
+2. Disguised Landing Screen (Chrome-Ready)
+
+When opening the URL in Chrome (desktop or mobile), the user should see only a fake, harmless interface, not a chat.
+
+Support two disguise modes (switchable via configuration/ENV):
+
+Fake PYQ Book Mode (Default Suggested):
+
+Show a believable “Previous Year Question” (PYQ) viewer for Maths or Physics.
+
+Features:
+
+Chapters/topics list on the side or top.
+
+A content area with example questions, formulas, diagrams, dummy text, etc.
+
+Scrollable content that feels like a real study page.
+
+Layout must look good in:
+
+Chrome on desktop (wider layout).
+
+Chrome on mobile (stacked or single-column layout).
+
+Calculator Mode:
+
+Show a fully functional calculator with:
+
+Standard numeric keypad.
+
+Basic arithmetic operations.
+
+Buttons must be touch-friendly and spaced for mobile Chrome usage.
+
+No obvious hint anywhere that this is a messaging app.
+
+3. Hidden Login Trigger (Secret Gesture)
+
+To reveal the real login:
+
+Include a small, subtle icon or “hotspot” on the disguised interface (e.g., a tiny dot in a corner, a harmless small symbol).
+
+The secret activation gesture:
+
+The user must tap/click that icon exactly 3 times within a short time window.
+
+This must work in:
+
+Chrome desktop (mouse clicks).
+
+Chrome mobile (touch taps).
+
+If the pattern is incorrect, nothing noticeable should happen.
+
+Once the pattern is completed:
+
+Show a secure login panel overlaying the fake interface.
+
+The fake interface should still be visible in the background or easily restorable after logout to maintain cover.
+
+4. Authentication & Access Control
+
+Rules:
+
+Only two users are ever allowed:
+
+UserA (admin/superuser).
+
+UserB (normal user).
+
+Store their identities and roles only on the backend, never exposed in front-end constants.
+
+Login Panel:
+
+Fields:
+
+Password (shared secret).
+
+Optional secondary PIN or passphrase for additional protection.
+
+Requirements:
+
+The password and PIN:
+
+Must be changeable later from inside the app (admin panel).
+
+Must not be stored or logged in plaintext.
+
+Must be usable to derive encryption keys for end-to-end style encryption.
+
+On successful login:
+
+Grant access to a single private chat between UserA and UserB.
+
+Issue a secure session (HTTP-only cookies or in-memory token; avoid storing raw secrets in localStorage).
+
+All backend routes (chat, files, WebRTC signaling) must require authentication.
+
+5. Chat UI & Features (Chrome Desktop + Mobile)
+
+After login, show:
+
+One direct chat between the two users, no other chats/channels.
+
+Messaging features:
+
+Real-time text chat
+
+Implement with WebSockets or equivalent for real-time sync.
+
+UI:
+
+Rounded chat bubbles.
+
+Sender/receiver alignment (like WhatsApp).
+
+Smooth scrolling.
+
+Touch-friendly input bar on mobile Chrome.
+
+Image and file sharing
+
+Allow users to send images and files.
+
+If possible:
+
+Encrypt files on the frontend before upload using the shared key.
+
+At minimum:
+
+Store files at unguessable URLs behind authenticated endpoints.
+
+Ensure upload and download flow is smooth in Chrome mobile and desktop.
+
+1:1 Audio & Video Calls (WebRTC)
+
+Implement WebRTC audio and video calling between the two users.
+
+Use a signaling channel via the backend (WebSockets).
+
+UI:
+
+“Voice Call” and “Video Call” buttons in the chat UI.
+
+An in-call overlay with mute/end call/toggle video.
+
+Ensure it works in:
+
+Chrome desktop.
+
+Chrome on Android (and in iOS Chrome where WebRTC support allows).
+
+Message status indicators
+
+Show minimal indicators:
+
+Sent (message reached server).
+
+Delivered (reached other device).
+
+Seen (other user opened chat or message).
+
+Use subtle icons, small ticks, or dots.
+
+Typing indicator
+
+Show “… is typing” when the other user is actively composing a message.
+
+6. Privacy-Focused UI/UX (Minimal, Secretive)
+
+Design style:
+
+Clean, minimal UI.
+
+Layout and interaction patterns familiar from WhatsApp (chat list style, bubbles) with subtle Instagram-like gradients or soft color accents (not too flashy).
+
+Responsive:
+
+On Chrome desktop:
+
+Utilize space but keep it simple, possibly a single main column or chat-centric layout.
+
+On Chrome mobile:
+
+Single-column, full-height chat; bottom input, large tap targets.
+
+Avoid anything that screams “messenger” on the lock screen or disguised view.
+
+Extra privacy touches:
+
+Quick Lock Button
+
+Inside chat, a small “Lock” icon or button.
+
+On click/tap:
+
+Immediately hide all chat content.
+
+Return to the fake PYQ book / calculator interface.
+
+Require secret gesture + login to re-enter.
+
+This must work smoothly on mobile Chrome for fast panic-lock.
+
+Blurred message previews
+
+Option (user setting) to blur message text by default.
+
+Show blurred bubbles; unblur only when:
+
+Hovered (desktop Chrome), or
+
+Tapped (mobile Chrome).
+
+Useful if someone is glancing at the screen.
+
+Auto-lock on inactivity
+
+After a configurable period of inactivity (e.g. 3–5 minutes):
+
+Automatically lock the app:
+
+Hide chat content.
+
+Return user to the disguised screen.
+
+On both Chrome desktop and mobile, implement user activity detection (mouse/touch/keyboard).
+
+7. Admin Panel (Hidden Superuser Controls)
+
+One user (UserA) is Admin.
+
+Admin-only, hidden panel with:
+
+Access opened by:
+
+Secret icon or hotspot in the chat UI, or
+
+Special keyboard shortcut (desktop) combined with a tap area for mobile.
+
+Admin Panel capabilities:
+
+Manage authentication secrets
+
+Change:
+
+Shared password.
+
+Secondary PIN or passphrase.
+
+Key rotation:
+
+New messages use new keys.
+
+Old messages should remain readable via key versioning or similar approach.
+
+Message expiry / self-destruct rules
+
+Set global or per-user rules like:
+
+Delete after view (once opened).
+
+Delete after 1 hour.
+
+Delete after 1 day.
+
+No auto-delete (not recommended by default).
+
+Ensure a background cleanup job or scheduled process enforces this.
+
+Emergency “Nuke” / Panic Wipe
+
+A clearly labeled, double-confirmation button:
+
+Deletes all chat messages.
+
+Deletes/stops referencing stored files/media.
+
+Optionally deletes encryption keys.
+
+After wipe:
+
+Log out all sessions.
+
+Return app to default disguised mode, with no visible traces of chat history.
+
+Session control
+
+Optionally view active sessions and force logout.
+
+The admin panel must:
+
+Be invisible to non-admin users.
+
+Never be hinted at in obvious UI text.
+
+8. Security & End-to-End Style Encryption
+
+Encryption design:
+
+All text messages must be:
+
+Encrypted in the browser (frontend) before sending.
+
+Decrypted only in the recipient’s browser.
+
+File/image encryption:
+
+Implement frontend encryption if feasible (e.g. chunk-based encryption for uploads).
+
+Otherwise, at minimum ensure server-side storage is protected and unguessable.
+
+Implementation notes:
+
+Use Web Crypto API or a trusted JS crypto library.
+
+Derive encryption keys from:
+
+The shared password (and optionally PIN) via a KDF like PBKDF2, Argon2, or scrypt (with salt, proper iteration count).
+
+Backend must:
+
+Never log plaintext messages.
+
+Store only encrypted message blobs plus non-sensitive metadata (timestamps, status, expiry).
+
+Do not store encryption keys in the database as plaintext.
+
+9. Backend & Storage
+
+Tech stack:
+
+Frontend: React (or comparable modern framework) tailored for Chrome browsers.
+
+Backend: Node.js + Express (or similar minimal framework).
+
+Database: lightweight (SQLite, PostgreSQL, MongoDB, etc.) for:
+
+Encrypted messages.
+
+User records (two users only).
+
+Settings (expiry rules, theme preferences, etc.).
+
+Backend requirements:
+
+Use secure authentication (hashed credentials, secure sessions).
+
+Protect:
+
+All chat APIs.
+
+WebRTC signaling endpoints.
+
+File upload/download endpoints.
+
+Implement scheduler/background jobs for:
+
+Message expiry.
+
+Cleaning up deleted media.
+
+10. Message Lifecycle, Status & Expiry
+
+Track each message with:
+
+Sender, recipient.
+
+Timestamp.
+
+Status: sent, delivered, seen, expired/deleted.
+
+Optional expiry time.
+
+Implement:
+
+WebSocket events for:
+
+Typing.
+
+Message delivery/seen.
+
+Scheduled tasks or database TTL to:
+
+Delete expired messages.
+
+All UI behavior must be smooth and responsive in Chrome desktop and mobile.
+
+11. README & Deployment (Chrome-Focused)
+
+Provide a clear README.md explaining:
+
+Overview
+
+This is a disguised, two-user, end-to-end style encrypted messaging app optimized for Chrome desktop and mobile.
+
+Environment variables
+
+Example variables:
+
+APP_SECRET
+
+SESSION_SECRET
+
+ENCRYPTION_SALT
+
+ADMIN_USERNAME
+
+ADMIN_INITIAL_PASSWORD
+
+DISGUISE_MODE (pyq or calculator)
+
+AUTO_LOCK_TIMEOUT_MINUTES
+
+MESSAGE_EXPIRY_DEFAULT
+
+How to set/change them.
+
+Changing shared password
+
+Steps for the admin to update credentials via the Admin Panel.
+
+Deployment instructions
+
+How to deploy on a typical Node/Express hosting environment, with HTTPS and a reverse proxy if needed.
+
+Clarify that:
+
+The app is accessed via a normal HTTPS link in Chrome.
+
+Chrome (desktop and mobile) is the primary supported browser.
+
+Security & secrecy notes
+
+Emphasize:
+
+No sign-up.
+
+Two users only.
+
+Disguised landing page.
+
+Quick-lock and auto-lock behaviors.
+
+Data minimization and emergency wipe.
+
+12. Explicit Non-Goals
+
+No public user registration.
+
+No groups, channels, or contact discovery.
+
+No social feeds, posts, or stories.
+
+No analytics/ads/trackers.
+
+This tool is strictly for private, hidden communication between exactly two people, accessed in Chrome on both desktop and mobile, with maximum secrecy and deniability.
