@@ -1,10 +1,18 @@
 import { useState, useEffect, useRef } from "react";
-import { Send, Paperclip, Mic, Video, Phone, Lock, MoreVertical, Check, CheckCheck, Image as ImageIcon, FileText } from "lucide-react";
+import { Send, Paperclip, Mic, Video, Phone, Lock, MoreVertical, Check, CheckCheck, UserPlus, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useToast } from "@/hooks/use-toast";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 interface ChatLayoutProps {
   onLock: () => void;
@@ -20,6 +28,7 @@ interface Message {
 }
 
 export function ChatLayout({ onLock }: ChatLayoutProps) {
+  const { toast } = useToast();
   const [messages, setMessages] = useState<Message[]>([
     { id: '1', text: "Hey, is the new deployment ready?", sender: 'them', timestamp: new Date(Date.now() - 1000 * 60 * 60), status: 'seen', type: 'text' },
     { id: '2', text: "Yes, I just pushed the changes to the staging environment.", sender: 'me', timestamp: new Date(Date.now() - 1000 * 60 * 59), status: 'seen', type: 'text' },
@@ -50,7 +59,7 @@ export function ChatLayout({ onLock }: ChatLayoutProps) {
     setMessages(prev => [...prev, newMsg]);
     setInputText("");
 
-    // Simulate reply
+    // Simulate reply (NOTE: In a real app, this would be a socket event)
     setTimeout(() => {
       setMessages(prev => prev.map(m => m.id === newMsg.id ? { ...m, status: 'delivered' } : m));
     }, 1000);
@@ -60,9 +69,33 @@ export function ChatLayout({ onLock }: ChatLayoutProps) {
     }, 2000);
   };
 
+  const handleCall = (type: 'voice' | 'video') => {
+    toast({
+      title: type === 'voice' ? "Starting Voice Call..." : "Starting Video Call...",
+      description: "Establishing secure WebRTC connection...",
+    });
+    
+    // Simulate call failure due to no backend
+    setTimeout(() => {
+      toast({
+        variant: "destructive",
+        title: "Connection Failed",
+        description: "Signaling server not reachable. (Backend required for calls)",
+      });
+    }, 2000);
+  };
+
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(window.location.href);
+    toast({
+      title: "Link Copied",
+      description: "Share this link securely with your contact.",
+    });
+  };
+
   return (
     <div className="flex h-screen w-full bg-background text-foreground mode-chat font-sans overflow-hidden">
-      {/* Contact List (Sidebar - Hidden on mobile if chat active, but for simplicity let's do desktop/mobile hybrid) */}
+      {/* Contact List (Sidebar) */}
       <div className="w-80 border-r border-border hidden md:flex flex-col bg-secondary/30">
         <div className="p-4 border-b border-border flex justify-between items-center">
           <div className="flex items-center gap-3">
@@ -71,9 +104,30 @@ export function ChatLayout({ onLock }: ChatLayoutProps) {
             </Avatar>
             <span className="font-semibold text-sm">My Account</span>
           </div>
-          <div className="flex gap-1">
-             <button className="p-2 hover:bg-background rounded-full text-muted-foreground"><MoreVertical size={18} /></button>
-          </div>
+          
+          <Dialog>
+            <DialogTrigger asChild>
+               <button className="p-2 hover:bg-background rounded-full text-muted-foreground hover:text-primary transition-colors" title="Add Contact">
+                 <UserPlus size={18} />
+               </button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Invite Contact</DialogTitle>
+                <DialogDescription>
+                  Share this secure link with the person you want to chat with. They will need the shared password to enter.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="flex items-center gap-2 mt-4">
+                <div className="flex-1 bg-muted p-3 rounded text-xs font-mono truncate border border-border">
+                  {window.location.href}
+                </div>
+                <button onClick={handleCopyLink} className="p-3 bg-primary text-primary-foreground rounded hover:bg-primary/90">
+                  <Copy size={16} />
+                </button>
+              </div>
+            </DialogContent>
+          </Dialog>
         </div>
         
         <div className="flex-1 overflow-y-auto">
@@ -113,13 +167,13 @@ export function ChatLayout({ onLock }: ChatLayoutProps) {
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <button className="p-2 hover:bg-secondary rounded-full transition-colors"><Phone size={20} /></button>
+                  <button onClick={() => handleCall('voice')} className="p-2 hover:bg-secondary rounded-full transition-colors"><Phone size={20} /></button>
                 </TooltipTrigger>
                 <TooltipContent>Voice Call</TooltipContent>
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <button className="p-2 hover:bg-secondary rounded-full transition-colors"><Video size={20} /></button>
+                  <button onClick={() => handleCall('video')} className="p-2 hover:bg-secondary rounded-full transition-colors"><Video size={20} /></button>
                 </TooltipTrigger>
                 <TooltipContent>Video Call</TooltipContent>
               </Tooltip>
