@@ -41,6 +41,7 @@ export function ChatLayout({ onLock }: ChatLayoutProps) {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [activeCall, setActiveCall] = useState<'voice' | 'video' | null>(null);
+  const [incomingCall, setIncomingCall] = useState<'voice' | 'video' | null>(null);
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const channelRef = useRef<BroadcastChannel | null>(null);
@@ -55,13 +56,23 @@ export function ChatLayout({ onLock }: ChatLayoutProps) {
       const data = event.data;
       if (data.type === 'message') {
         setMessages(prev => [...prev, { ...data.payload, sender: 'them', status: 'seen' }]);
+      } else if (data.type === 'call_start') {
+        setIncomingCall(data.mode);
+      } else if (data.type === 'call_end') {
+        setIncomingCall(null);
+        setActiveCall(null);
+        toast({ title: "Call Ended", description: "The other person ended the call." });
+      } else if (data.type === 'call_accept') {
+        // The other side accepted our call!
+        // We don't need to do anything specific here as the CallOverlay handles the "Connected" state via timer
+        // But in a real app, we'd stop the ringing sound here.
       }
     };
 
     return () => {
       channelRef.current?.close();
     };
-  }, []);
+  }, [toast]); // Added toast to dependency
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -136,10 +147,29 @@ export function ChatLayout({ onLock }: ChatLayoutProps) {
 
   const handleCall = (type: 'voice' | 'video') => {
     setActiveCall(type);
+    channelRef.current?.postMessage({ type: 'call_start', mode: type });
     toast({
-      title: type === 'voice' ? "Calling John Doe..." : "Starting Video Call...",
-      description: "Establishing secure WebRTC handshake...",
+      title: type === 'voice' ? "Calling..." : "Starting Video Call...",
+      description: "Waiting for answer...",
     });
+  };
+  
+  const acceptCall = () => {
+    if (incomingCall) {
+      setActiveCall(incomingCall);
+      setIncomingCall(null);
+      channelRef.current?.postMessage({ type: 'call_accept' });
+    }
+  };
+
+  const rejectCall = () => {
+    setIncomingCall(null);
+    channelRef.current?.postMessage({ type: 'call_end' });
+  };
+
+  const endCall = () => {
+    setActiveCall(null);
+    channelRef.current?.postMessage({ type: 'call_end' });
   };
 
   const handleCopyLink = () => {
@@ -156,11 +186,41 @@ export function ChatLayout({ onLock }: ChatLayoutProps) {
 
   return (
     <div className="flex h-screen w-full bg-background text-foreground mode-chat font-sans overflow-hidden relative">
+      {/* Incoming Call Dialog */}
+      <Dialog open={!!incomingCall} onOpenChange={(open) => !open && rejectCall()}>
+        <DialogContent className="sm:max-w-md border-none bg-slate-900 text-white shadow-2xl">
+          <DialogHeader className="flex flex-col items-center gap-4">
+            <Avatar className="w-24 h-24 border-4 border-white/10 shadow-xl animate-pulse">
+              <AvatarImage src="https://github.com/shadcn.png" />
+              <AvatarFallback>JD</AvatarFallback>
+            </Avatar>
+            <DialogTitle className="text-2xl font-light">Incoming {incomingCall === 'video' ? 'Video' : 'Voice'} Call</DialogTitle>
+            <DialogDescription className="text-white/60">
+              John Doe is calling you securely...
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center justify-center gap-8 mt-6">
+             <button 
+               onClick={rejectCall}
+               className="p-4 bg-red-500 rounded-full hover:bg-red-600 transition-all shadow-lg shadow-red-500/20"
+             >
+               <PhoneOff size={24} />
+             </button>
+             <button 
+               onClick={acceptCall}
+               className="p-4 bg-green-500 rounded-full hover:bg-green-600 transition-all shadow-lg shadow-green-500/20 animate-bounce"
+             >
+               <Phone size={24} />
+             </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Call Overlay */}
       {activeCall && (
         <CallOverlay 
           type={activeCall} 
-          onEnd={() => setActiveCall(null)} 
+          onEnd={endCall} 
         />
       )}
 
@@ -480,13 +540,13 @@ function CallOverlay({ type, onEnd }: { type: 'voice' | 'video', onEnd: () => vo
       <div className="absolute inset-0 z-0">
         {type === 'video' && status === 'Connected' ? (
           <div className="w-full h-full bg-slate-900 flex items-center justify-center">
-             {/* In a real app, this would be the remote stream. For mockup, we show a placeholder or static image */}
+             {/* Using a stock image of a woman as requested ("see her") */}
              <img 
-               src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=800&h=800&fit=crop" 
+               src="https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=800&h=800&fit=crop" 
                alt="Remote User" 
-               className="w-full h-full object-cover opacity-60"
+               className="w-full h-full object-cover opacity-80"
              />
-             <div className="absolute inset-0 bg-black/20"></div>
+             <div className="absolute inset-0 bg-black/10"></div>
           </div>
         ) : (
            <div className="w-full h-full bg-slate-950"></div>
