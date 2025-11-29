@@ -92,10 +92,16 @@ export function useWebRTC() {
       setActiveCall(mode);
       setCallStatus('calling');
 
+      // First close any existing call
+      if (peerRef.current) {
+        peerRef.current.close();
+        peerRef.current = null;
+      }
+
       // 1. Get User Media
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: true,
-        video: mode === 'video'
+        video: mode === 'video' ? { width: { ideal: 1280 }, height: { ideal: 720 } } : false
       });
       setLocalStream(stream);
       localStreamRef.current = stream;
@@ -144,6 +150,12 @@ export function useWebRTC() {
 
   const acceptCall = async () => {
     try {
+      // First close any existing call
+      if (peerRef.current) {
+        peerRef.current.close();
+        peerRef.current = null;
+      }
+
       setIncomingCall(null);
       setActiveCall('video'); // Assuming video for now
       setCallStatus('connected');
@@ -151,7 +163,7 @@ export function useWebRTC() {
       // 1. Get User Media
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: true,
-        video: true // Ideally match the offer
+        video: { width: { ideal: 1280 }, height: { ideal: 720 } } // Ideally match the offer
       });
       setLocalStream(stream);
       localStreamRef.current = stream;

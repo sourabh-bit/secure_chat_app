@@ -57,6 +57,7 @@ export default function Home() {
 
   const handleLoginSuccess = (userType: 'admin' | 'friend') => {
     setCurrentUser(userType);
+    setShowAdminPanel(false); // Always close admin panel on login
     setShowLogin(false);
     setMode('chat');
   };
@@ -64,6 +65,8 @@ export default function Home() {
   const handlePanicLock = () => {
     setMode('disguise');
     setShowLogin(false);
+    setShowAdminPanel(false); // Also close admin panel on lock
+    setCurrentUser('friend'); // Reset to friend on lock
   };
 
   // Keyboard shortcut for Admin Panel (Ctrl+Shift+A or hidden gesture)
@@ -105,7 +108,7 @@ export default function Home() {
              currentUser={currentUser} 
           />
           
-          {/* Admin Trigger Button (Hidden/Visible for Admin) */}
+          {/* Admin Trigger Button (Hidden/Visible for Admin Only) */}
           {currentUser === 'admin' && (
             <button 
               onClick={() => setShowAdminPanel(true)}
@@ -114,10 +117,13 @@ export default function Home() {
             />
           )}
           
-          <AdminPanel 
-            isOpen={showAdminPanel} 
-            onClose={() => setShowAdminPanel(false)} 
-          />
+          {/* Admin Panel - Only render for admin users */}
+          {currentUser === 'admin' && (
+            <AdminPanel 
+              isOpen={showAdminPanel} 
+              onClose={() => setShowAdminPanel(false)} 
+            />
+          )}
         </>
       )}
       

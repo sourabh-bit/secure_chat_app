@@ -266,7 +266,7 @@ export function ChatLayout({ onLock, currentUser }: ChatLayoutProps) {
                <AvatarFallback>JD</AvatarFallback>
             </Avatar>
             <div className="flex flex-col">
-              <h2 className="font-semibold text-sm">{currentUser === 'admin' ? 'Friend' : 'Admin'}</h2>
+              <h2 className="font-semibold text-sm">{currentUser === 'admin' ? 'Friend' : 'Friend'}</h2>
               <span className="text-xs text-green-600 dark:text-green-400">Online</span>
             </div>
           </div>
