@@ -100,6 +100,18 @@ const migrateLocalStorage = (userType: 'admin' | 'friend') => {
   });
 };
 
+// Log connection events
+const logConnectionEvent = (user: string, action: string) => {
+  const logs = JSON.parse(localStorage.getItem('connection_logs') || '[]');
+  logs.push({
+    timestamp: new Date().toISOString(),
+    user,
+    action
+  });
+  // Keep only last 100 logs
+  localStorage.setItem('connection_logs', JSON.stringify(logs.slice(-100)));
+};
+
 export function useChatConnection(userType: 'admin' | 'friend') {
   const { toast } = useToast();
   
@@ -286,7 +298,9 @@ export function useChatConnection(userType: 'admin' | 'friend') {
         }));
         toast({ title: `${peerName} is online!` });
         
+        // Log friend coming online (only admin sees logs)
         if (userType === 'admin') {
+          logConnectionEvent(peerName, 'Came online');
           showBrowserNotification(
             '💚 Friend Online',
             `${peerName} just came online!`,
@@ -299,8 +313,15 @@ export function useChatConnection(userType: 'admin' | 'friend') {
 
       case 'peer-left':
         setPeerConnected(false);
+        const leftPeerName = peerProfile.name || defaultPeerName;
         setPeerProfile(prev => ({ ...prev, lastSeen: new Date(), isTyping: false }));
-        toast({ title: `${peerProfile.name} went offline` });
+        toast({ title: `${leftPeerName} went offline` });
+        
+        // Log friend going offline (only admin sees logs)
+        if (userType === 'admin') {
+          logConnectionEvent(leftPeerName, 'Went offline');
+        }
+        
         cleanupCall();
         break;
 
