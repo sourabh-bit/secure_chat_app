@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Key, Lock, Eye, EyeOff, Save, Check, RotateCcw, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -13,46 +13,37 @@ interface SettingsPanelProps {
 export function SettingsPanel({ isOpen, onClose, userType }: SettingsPanelProps) {
   const { toast } = useToast();
   const [showPasswords, setShowPasswords] = useState(false);
+  const [loading, setLoading] = useState(false);
   
-  const [secretKey, setSecretKey] = useState(localStorage.getItem('gatekeeper_key') || 'secret');
-  const [myPassword, setMyPassword] = useState(
-    localStorage.getItem(userType === 'admin' ? 'admin_pass' : 'friend_pass') || 
-    (userType === 'admin' ? 'admin123' : 'friend123')
-  );
-  
+  const [secretKey, setSecretKey] = useState('');
+  const [myPassword, setMyPassword] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [saved, setSaved] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
+  // Load passwords from server
+  useEffect(() => {
+    if (isOpen) {
+      fetch('/api/auth/passwords')
+        .then(res => res.json())
+        .then(data => {
+          setSecretKey(data.gatekeeper_key || 'secret');
+          setMyPassword(userType === 'admin' ? data.admin_pass : data.friend_pass);
+        })
+        .catch(() => {
+          setSecretKey('secret');
+          setMyPassword(userType === 'admin' ? 'admin123' : 'friend123');
+        });
+    }
+  }, [isOpen, userType]);
+
   const handleResetApp = () => {
-    // Clear all app data
-    const keysToKeep = ['gatekeeper_key', 'admin_pass', 'friend_pass'];
-    const savedKeys: Record<string, string> = {};
-    keysToKeep.forEach(key => {
-      const val = localStorage.getItem(key);
-      if (val) savedKeys[key] = val;
-    });
-    
     localStorage.clear();
-    
-    // Restore passwords
-    Object.entries(savedKeys).forEach(([key, val]) => {
-      localStorage.setItem(key, val);
-    });
-    
     toast({ title: "App reset! Refreshing...", variant: "destructive" });
     setTimeout(() => window.location.reload(), 1000);
   };
 
-  const handleSave = () => {
-    const storedPass = localStorage.getItem(userType === 'admin' ? 'admin_pass' : 'friend_pass') || 
-      (userType === 'admin' ? 'admin123' : 'friend123');
-    
-    if (currentPassword !== storedPass) {
-      toast({ variant: "destructive", title: "Current password is incorrect" });
-      return;
-    }
-
+  const handleSave = async () => {
     if (myPassword.length < 4) {
       toast({ variant: "destructive", title: "Password must be at least 4 characters" });
       return;
@@ -63,13 +54,33 @@ export function SettingsPanel({ isOpen, onClose, userType }: SettingsPanelProps)
       return;
     }
 
-    localStorage.setItem('gatekeeper_key', secretKey);
-    localStorage.setItem(userType === 'admin' ? 'admin_pass' : 'friend_pass', myPassword);
-    
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-    toast({ title: "Settings saved successfully" });
-    setCurrentPassword('');
+    setLoading(true);
+    try {
+      const response = await fetch('/api/auth/passwords', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          gatekeeper_key: secretKey,
+          [userType === 'admin' ? 'admin_pass' : 'friend_pass']: myPassword,
+          current_password: currentPassword
+        })
+      });
+      
+      if (!response.ok) {
+        const data = await response.json();
+        toast({ variant: "destructive", title: data.error || "Failed to save" });
+        return;
+      }
+      
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+      toast({ title: "Settings saved - works on all devices!" });
+      setCurrentPassword('');
+    } catch {
+      toast({ variant: "destructive", title: "Failed to save settings" });
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (!isOpen) return null;

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Lock, ArrowRight, X } from "lucide-react";
+import { Lock, ArrowRight, X, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface LoginOverlayProps {
@@ -9,11 +9,36 @@ interface LoginOverlayProps {
   onClose: () => void;
 }
 
+interface Passwords {
+  gatekeeper_key: string;
+  admin_pass: string;
+  friend_pass: string;
+}
+
 export function LoginOverlay({ isOpen, onSuccess, onClose }: LoginOverlayProps) {
   const [password, setPassword] = useState("");
   const [secretKey, setSecretKey] = useState("");
   const [error, setError] = useState(false);
   const [step, setStep] = useState<'gatekeeper' | 'personal'>('gatekeeper');
+  const [loading, setLoading] = useState(false);
+  const [serverPasswords, setServerPasswords] = useState<Passwords | null>(null);
+
+  // Fetch passwords from server
+  useEffect(() => {
+    if (isOpen) {
+      fetch('/api/auth/passwords')
+        .then(res => res.json())
+        .then(data => setServerPasswords(data))
+        .catch(() => {
+          // Fallback to defaults if server unavailable
+          setServerPasswords({
+            gatekeeper_key: 'secret',
+            admin_pass: 'admin123',
+            friend_pass: 'friend123'
+          });
+        });
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -26,22 +51,19 @@ export function LoginOverlay({ isOpen, onSuccess, onClose }: LoginOverlayProps) 
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!serverPasswords) return;
     
     if (step === 'gatekeeper') {
-      const gatekeeperKey = localStorage.getItem('gatekeeper_key') || 'secret';
-      if (secretKey === gatekeeperKey) {
+      if (secretKey === serverPasswords.gatekeeper_key) {
         setStep('personal');
         setError(false);
       } else {
         shakeError();
       }
     } else {
-      const adminPass = localStorage.getItem('admin_pass') || 'admin123';
-      const friendPass = localStorage.getItem('friend_pass') || 'friend123';
-
-      if (password === adminPass) {
+      if (password === serverPasswords.admin_pass) {
         onSuccess('admin');
-      } else if (password === friendPass) {
+      } else if (password === serverPasswords.friend_pass) {
         onSuccess('friend');
       } else {
         shakeError();
@@ -109,20 +131,10 @@ export function LoginOverlay({ isOpen, onSuccess, onClose }: LoginOverlayProps) 
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 bg-white/5 text-center space-y-1">
+        <div className="px-6 py-4 bg-white/5 text-center">
           <p className="text-[10px] text-white/20 font-mono uppercase tracking-widest">
             End-to-End Encrypted
           </p>
-          {step === 'gatekeeper' && (
-            <p className="text-[9px] text-white/30">
-              Default key: <span className="text-white/50 font-mono">secret</span>
-            </p>
-          )}
-          {step === 'personal' && (
-            <p className="text-[9px] text-white/30">
-              Defaults: <span className="text-white/50 font-mono">admin123</span> / <span className="text-white/50 font-mono">friend123</span>
-            </p>
-          )}
         </div>
       </motion.div>
     </div>

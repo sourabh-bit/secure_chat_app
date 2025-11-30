@@ -29,6 +29,13 @@ const rooms = new Map<string, RoomData>();
 const pendingMessages = new Map<string, PendingMessage[]>();
 const messageStatus = new Map<string, 'sent' | 'delivered' | 'read'>();
 
+// Server-side password storage (synced across all devices)
+const passwords = {
+  gatekeeper_key: 'secret',
+  admin_pass: 'admin123',
+  friend_pass: 'friend123'
+};
+
 const broadcastToUserType = (room: RoomData, userType: string, data: any, excludeWs?: WebSocket) => {
   room.clients.forEach((client, clientWs) => {
     if (client.userType === userType && clientWs.readyState === WebSocket.OPEN && clientWs !== excludeWs) {
@@ -50,6 +57,26 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
   
+  // API endpoints for password management
+  app.get('/api/auth/passwords', (req, res) => {
+    res.json(passwords);
+  });
+  
+  app.post('/api/auth/passwords', (req, res) => {
+    const { gatekeeper_key, admin_pass, friend_pass, current_password } = req.body;
+    
+    // Verify current password before allowing changes
+    if (current_password !== passwords.admin_pass && current_password !== passwords.friend_pass) {
+      return res.status(401).json({ error: 'Invalid current password' });
+    }
+    
+    if (gatekeeper_key) passwords.gatekeeper_key = gatekeeper_key;
+    if (admin_pass) passwords.admin_pass = admin_pass;
+    if (friend_pass) passwords.friend_pass = friend_pass;
+    
+    res.json({ success: true });
+  });
+
   // WebSocket signaling server
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
