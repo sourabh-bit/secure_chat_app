@@ -109,10 +109,20 @@ export function LoginOverlay({ isOpen, onSuccess, onClose }: LoginOverlayProps) 
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 bg-white/5 text-center">
+        <div className="px-6 py-4 bg-white/5 text-center space-y-1">
           <p className="text-[10px] text-white/20 font-mono uppercase tracking-widest">
             End-to-End Encrypted
           </p>
+          {step === 'gatekeeper' && (
+            <p className="text-[9px] text-white/30">
+              Default key: <span className="text-white/50 font-mono">secret</span>
+            </p>
+          )}
+          {step === 'personal' && (
+            <p className="text-[9px] text-white/30">
+              Defaults: <span className="text-white/50 font-mono">admin123</span> / <span className="text-white/50 font-mono">friend123</span>
+            </p>
+          )}
         </div>
       </motion.div>
     </div>
