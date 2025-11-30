@@ -622,11 +622,10 @@ export function ChatLayout({ onLock, currentUser }: ChatLayoutProps) {
           ref={scrollRef}
           className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-2 sm:space-y-3 scroll-smooth"
         >
-          {!peerConnected && messages.length === 0 && (
+          {messages.length === 0 && (
             <div className="text-center py-6 sm:py-8">
-              <div className="inline-flex items-center gap-2 bg-yellow-100 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-200 px-3 sm:px-4 py-2 rounded-full text-xs sm:text-sm">
-                <div className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse" />
-                Waiting for {peerProfile.name}...
+              <div className="inline-flex items-center gap-2 text-muted-foreground px-3 sm:px-4 py-2 text-xs sm:text-sm">
+                Start a conversation with {peerProfile.name}
               </div>
             </div>
           )}
@@ -654,7 +653,7 @@ export function ChatLayout({ onLock, currentUser }: ChatLayoutProps) {
                 <button 
                   type="button" 
                   onClick={() => fileInputRef.current?.click()} 
-                  disabled={!peerConnected}
+                  disabled={!isConnected}
                   className="p-2 sm:p-2.5 text-muted-foreground hover:bg-secondary rounded-full disabled:opacity-40 transition-colors"
                 >
                   <Paperclip size={18} className="sm:w-5 sm:h-5" />
@@ -695,8 +694,8 @@ export function ChatLayout({ onLock, currentUser }: ChatLayoutProps) {
                   type="text" 
                   value={inputText} 
                   onChange={handleInputChange} 
-                  placeholder={peerConnected ? "Message..." : "Waiting..."}
-                  disabled={!peerConnected}
+                  placeholder="Message..."
+                  disabled={!isConnected}
                   className="flex-1 bg-transparent border-none outline-none text-sm disabled:opacity-50 w-full" 
                 />
               )}
@@ -713,7 +712,7 @@ export function ChatLayout({ onLock, currentUser }: ChatLayoutProps) {
             ) : inputText.trim() ? (
               <button 
                 type="submit"
-                disabled={!peerConnected}
+                disabled={!isConnected}
                 className="p-2.5 sm:p-3 rounded-full bg-primary disabled:opacity-40 shrink-0 hover:bg-primary/90 transition-colors"
               >
                 <Send size={18} className="text-white sm:w-5 sm:h-5" />
@@ -722,7 +721,7 @@ export function ChatLayout({ onLock, currentUser }: ChatLayoutProps) {
               <button 
                 type="button" 
                 onClick={handleStartRecording}
-                disabled={!peerConnected}
+                disabled={!isConnected}
                 className="p-2.5 sm:p-3 text-muted-foreground hover:bg-secondary rounded-full disabled:opacity-40 shrink-0 transition-colors"
               >
                 <Mic size={18} className="sm:w-5 sm:h-5" />

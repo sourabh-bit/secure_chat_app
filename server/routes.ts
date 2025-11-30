@@ -5,6 +5,7 @@ import { WebSocketServer, WebSocket } from "ws";
 interface ClientData {
   ws: WebSocket;
   profile?: { name: string; avatar: string };
+  userType?: string;
 }
 
 interface RoomData {
@@ -12,7 +13,18 @@ interface RoomData {
   createdAt: Date;
 }
 
+interface PendingMessage {
+  id: string;
+  text: string;
+  messageType: string;
+  mediaUrl?: string;
+  timestamp: string;
+  senderName: string;
+  targetUserType: string;
+}
+
 const rooms = new Map<string, RoomData>();
+const pendingMessages = new Map<string, PendingMessage[]>(); // roomId -> messages for offline users
 
 export async function registerRoutes(
   httpServer: Server,
@@ -25,6 +37,7 @@ export async function registerRoutes(
   wss.on("connection", (ws: WebSocket) => {
     let currentRoom: string | null = null;
     let myProfile: { name: string; avatar: string } | undefined;
+    let myUserType: string | undefined;
 
     ws.on("message", (message: string) => {
       try {
@@ -34,6 +47,7 @@ export async function registerRoutes(
         if (type === "join") {
           currentRoom = roomId;
           myProfile = data.profile;
+          myUserType = data.userType;
           
           // Create room if it doesn't exist
           if (!rooms.has(roomId)) {
@@ -44,7 +58,7 @@ export async function registerRoutes(
           }
           
           const room = rooms.get(roomId)!;
-          room.clients.set(ws, { ws, profile: myProfile });
+          room.clients.set(ws, { ws, profile: myProfile, userType: myUserType });
           
           const roomSize = room.clients.size;
           
@@ -65,6 +79,24 @@ export async function registerRoutes(
             peerProfile: peerProfile
           }));
           
+          // Deliver any pending messages for this user
+          const roomPendingKey = `${roomId}_${myUserType}`;
+          const pending = pendingMessages.get(roomPendingKey);
+          if (pending && pending.length > 0) {
+            pending.forEach(msg => {
+              ws.send(JSON.stringify({
+                type: "chat-message",
+                id: msg.id,
+                text: msg.text,
+                messageType: msg.messageType,
+                mediaUrl: msg.mediaUrl,
+                timestamp: msg.timestamp,
+                senderName: msg.senderName
+              }));
+            });
+            pendingMessages.delete(roomPendingKey);
+          }
+          
           // Notify existing peers
           if (roomSize >= 2) {
             room.clients.forEach((client, clientWs) => {
@@ -78,8 +110,53 @@ export async function registerRoutes(
             });
           }
 
+        } else if (type === "chat-message" && currentRoom) {
+          // Handle chat messages - store if peer offline
+          const room = rooms.get(currentRoom);
+          if (!room) return;
+          
+          let peerOnline = false;
+          let peerUserType: string | undefined;
+          
+          room.clients.forEach((client, clientWs) => {
+            if (clientWs !== ws && clientWs.readyState === WebSocket.OPEN) {
+              peerOnline = true;
+              clientWs.send(JSON.stringify(data));
+            }
+            if (clientWs !== ws) {
+              peerUserType = client.userType;
+            }
+          });
+          
+          // If peer is offline, store the message
+          if (!peerOnline) {
+            // Determine target user type (the opposite of sender)
+            const targetUserType = myUserType === 'admin' ? 'friend' : 'admin';
+            const roomPendingKey = `${currentRoom}_${targetUserType}`;
+            
+            if (!pendingMessages.has(roomPendingKey)) {
+              pendingMessages.set(roomPendingKey, []);
+            }
+            
+            pendingMessages.get(roomPendingKey)!.push({
+              id: data.id,
+              text: data.text,
+              messageType: data.messageType || 'text',
+              mediaUrl: data.mediaUrl,
+              timestamp: data.timestamp,
+              senderName: data.senderName,
+              targetUserType
+            });
+            
+            // Confirm to sender that message was queued
+            ws.send(JSON.stringify({
+              type: "message-queued",
+              id: data.id
+            }));
+          }
+
         } else if (currentRoom && rooms.has(currentRoom)) {
-          // Relay signaling messages
+          // Relay other signaling messages
           const room = rooms.get(currentRoom)!;
           room.clients.forEach((client, clientWs) => {
             if (clientWs !== ws && clientWs.readyState === WebSocket.OPEN) {

@@ -47,14 +47,30 @@ const ICE_SERVERS = {
 
 const FIXED_ROOM_ID = 'SECURE_CHAT_MAIN';
 
+const requestNotificationPermission = async () => {
+  if ('Notification' in window && Notification.permission === 'default') {
+    await Notification.requestPermission();
+  }
+};
+
+const showBrowserNotification = (title: string, body: string, icon?: string) => {
+  if ('Notification' in window && Notification.permission === 'granted') {
+    if (document.hidden) {
+      new Notification(title, { body, icon: icon || '/favicon.ico', tag: 'chat-notification' });
+    }
+  }
+};
+
 export function useChatConnection(userType: 'admin' | 'friend') {
   const { toast } = useToast();
   
   const [isConnected, setIsConnected] = useState(false);
   const [peerConnected, setPeerConnected] = useState(false);
   
+  const defaultPeerName = userType === 'admin' ? 'Friend' : 'Admin';
+  
   const [myProfile, setMyProfile] = useState<UserProfile>(() => {
-    const saved = localStorage.getItem(`profile_${userType}`);
+    const saved = localStorage.getItem(`chat_my_profile_${userType}`);
     if (saved) {
       const parsed = JSON.parse(saved);
       return { ...parsed, lastSeen: null, isTyping: false };
@@ -67,12 +83,25 @@ export function useChatConnection(userType: 'admin' | 'friend') {
     };
   });
   
-  const [peerProfile, setPeerProfile] = useState<UserProfile>({
-    name: userType === 'admin' ? 'Friend' : 'Admin',
-    avatar: '',
-    lastSeen: null,
-    isTyping: false
+  const [peerProfile, setPeerProfile] = useState<UserProfile>(() => {
+    const saved = localStorage.getItem(`chat_peer_profile_${userType}`);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return { ...parsed, lastSeen: new Date(parsed.lastSeen), isTyping: false };
+    }
+    return {
+      name: defaultPeerName,
+      avatar: '',
+      lastSeen: null,
+      isTyping: false
+    };
   });
+  
+  useEffect(() => {
+    if (userType === 'admin') {
+      requestNotificationPermission();
+    }
+  }, [userType]);
   
   const [messages, setMessages] = useState<Message[]>(() => {
     const saved = localStorage.getItem('chat_messages');
@@ -103,11 +132,21 @@ export function useChatConnection(userType: 'admin' | 'friend') {
   }, [messages]);
 
   useEffect(() => {
-    localStorage.setItem(`profile_${userType}`, JSON.stringify({
+    localStorage.setItem(`chat_my_profile_${userType}`, JSON.stringify({
       name: myProfile.name,
       avatar: myProfile.avatar
     }));
   }, [myProfile.name, myProfile.avatar, userType]);
+
+  useEffect(() => {
+    if (peerProfile.name !== defaultPeerName || peerProfile.avatar) {
+      localStorage.setItem(`chat_peer_profile_${userType}`, JSON.stringify({
+        name: peerProfile.name,
+        avatar: peerProfile.avatar,
+        lastSeen: peerProfile.lastSeen
+      }));
+    }
+  }, [peerProfile.name, peerProfile.avatar, peerProfile.lastSeen, defaultPeerName, userType]);
 
   const getWebSocketUrl = () => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -138,7 +177,8 @@ export function useChatConnection(userType: 'admin' | 'friend') {
       ws.send(JSON.stringify({ 
         type: 'join', 
         roomId: FIXED_ROOM_ID,
-        profile: { name: myProfile.name, avatar: myProfile.avatar }
+        profile: { name: myProfile.name, avatar: myProfile.avatar },
+        userType: userType
       }));
       setIsConnected(true);
       if (reconnectTimeoutRef.current) {
@@ -172,11 +212,24 @@ export function useChatConnection(userType: 'admin' | 'friend') {
 
       case 'peer-joined':
         setPeerConnected(true);
-        setPeerProfile(prev => ({ ...prev, lastSeen: null, isTyping: false }));
-        if (data.profile) {
-          setPeerProfile(prev => ({ ...prev, name: data.profile.name, avatar: data.profile.avatar }));
+        const peerName = data.profile?.name || defaultPeerName;
+        setPeerProfile(prev => ({ 
+          ...prev, 
+          name: data.profile?.name || prev.name,
+          avatar: data.profile?.avatar || prev.avatar,
+          lastSeen: null, 
+          isTyping: false 
+        }));
+        toast({ title: `${peerName} is online!` });
+        
+        if (userType === 'admin') {
+          showBrowserNotification(
+            '💚 Friend Online',
+            `${peerName} just came online!`,
+            data.profile?.avatar
+          );
         }
-        toast({ title: `${data.profile?.name || 'Friend'} is online!` });
+        
         sendSignal({ type: 'profile-update', profile: { name: myProfile.name, avatar: myProfile.avatar } });
         break;
 
@@ -198,6 +251,7 @@ export function useChatConnection(userType: 'admin' | 'friend') {
         break;
 
       case 'chat-message':
+        const msgSenderName = data.senderName || defaultPeerName;
         const newMsg: Message = {
           id: data.id || Date.now().toString(),
           text: data.text,
@@ -205,10 +259,23 @@ export function useChatConnection(userType: 'admin' | 'friend') {
           timestamp: new Date(data.timestamp),
           type: data.messageType || 'text',
           mediaUrl: data.mediaUrl,
-          senderName: data.senderName
+          senderName: msgSenderName
         };
         setMessages(prev => [...prev, newMsg]);
         setPeerProfile(prev => ({ ...prev, isTyping: false }));
+        
+        if (userType === 'admin') {
+          const msgPreview = data.messageType === 'text' 
+            ? (data.text?.length > 50 ? data.text.substring(0, 50) + '...' : data.text)
+            : data.messageType === 'image' ? '📷 Photo'
+            : data.messageType === 'video' ? '🎥 Video'
+            : data.messageType === 'audio' ? '🎤 Voice message'
+            : 'New message';
+          showBrowserNotification(
+            `💬 ${msgSenderName}`,
+            msgPreview
+          );
+        }
         break;
 
       case 'call-request':
@@ -244,6 +311,10 @@ export function useChatConnection(userType: 'admin' | 'friend') {
       case 'call-end':
         toast({ title: "Call ended" });
         cleanupCall();
+        break;
+      
+      case 'message-queued':
+        // Message queued silently - like WhatsApp
         break;
     }
   };
