@@ -9,6 +9,7 @@ interface Message {
   type: 'text' | 'image' | 'video' | 'audio';
   mediaUrl?: string;
   senderName?: string;
+  status?: 'sending' | 'sent' | 'delivered' | 'read';
 }
 
 interface UserProfile {
@@ -204,9 +205,17 @@ export function useChatConnection(userType: 'admin' | 'friend') {
   const handleMessage = async (data: any) => {
     switch (data.type) {
       case 'joined':
-        if (!data.isInitiator && data.peerProfile) {
+        if (data.peerOnline && data.peerProfile) {
           setPeerConnected(true);
           setPeerProfile(prev => ({ ...prev, ...data.peerProfile, lastSeen: null, isTyping: false }));
+        } else if (data.peerProfile) {
+          setPeerProfile(prev => ({ ...prev, ...data.peerProfile }));
+        }
+        // Mark all sent messages as delivered if peer is online
+        if (data.peerOnline) {
+          setMessages(prev => prev.map(m => 
+            m.sender === 'me' && m.status === 'sent' ? { ...m, status: 'delivered' as const } : m
+          ));
         }
         break;
 
@@ -252,19 +261,31 @@ export function useChatConnection(userType: 'admin' | 'friend') {
 
       case 'chat-message':
         const msgSenderName = data.senderName || defaultPeerName;
+        const incomingSender = data.sender === 'me' ? 'me' : 'them';
         const newMsg: Message = {
           id: data.id || Date.now().toString(),
           text: data.text,
-          sender: 'them',
+          sender: incomingSender,
           timestamp: new Date(data.timestamp),
           type: data.messageType || 'text',
           mediaUrl: data.mediaUrl,
-          senderName: msgSenderName
+          senderName: msgSenderName,
+          status: data.status || 'delivered'
         };
-        setMessages(prev => [...prev, newMsg]);
+        
+        // Avoid duplicates
+        setMessages(prev => {
+          if (prev.some(m => m.id === newMsg.id)) return prev;
+          return [...prev, newMsg];
+        });
         setPeerProfile(prev => ({ ...prev, isTyping: false }));
         
-        if (userType === 'admin') {
+        // Send read receipt if message is from peer
+        if (incomingSender === 'them') {
+          sendSignal({ type: 'message-read', ids: [newMsg.id] });
+        }
+        
+        if (userType === 'admin' && incomingSender === 'them') {
           const msgPreview = data.messageType === 'text' 
             ? (data.text?.length > 50 ? data.text.substring(0, 50) + '...' : data.text)
             : data.messageType === 'image' ? '📷 Photo'
@@ -314,7 +335,26 @@ export function useChatConnection(userType: 'admin' | 'friend') {
         break;
       
       case 'message-queued':
-        // Message queued silently - like WhatsApp
+        // Update message status to sent
+        setMessages(prev => prev.map(m => 
+          m.id === data.id ? { ...m, status: 'sent' as const } : m
+        ));
+        break;
+      
+      case 'message-status':
+        // Update message statuses (delivered/read)
+        setMessages(prev => prev.map(m => 
+          data.ids.includes(m.id) && m.sender === 'me' 
+            ? { ...m, status: data.status as 'delivered' | 'read' } 
+            : m
+        ));
+        break;
+      
+      case 'emergency-wipe':
+        // Emergency wipe from server
+        setMessages([]);
+        localStorage.removeItem('chat_messages');
+        toast({ title: "🚨 All messages wiped", variant: "destructive" });
         break;
     }
   };
@@ -337,7 +377,8 @@ export function useChatConnection(userType: 'admin' | 'friend') {
       timestamp: new Date(),
       type: msg.type || 'text',
       mediaUrl: msg.mediaUrl,
-      senderName: myProfile.name
+      senderName: myProfile.name,
+      status: peerConnected ? 'delivered' : 'sending'
     };
 
     setMessages(prev => [...prev, newMsg]);
@@ -355,6 +396,12 @@ export function useChatConnection(userType: 'admin' | 'friend') {
 
     return newMsg;
   };
+  
+  const emergencyWipe = useCallback(() => {
+    sendSignal({ type: 'emergency-wipe' });
+    setMessages([]);
+    localStorage.removeItem('chat_messages');
+  }, [sendSignal]);
 
   const deleteMessage = useCallback((msgId: string) => {
     setMessages(prev => prev.filter(m => m.id !== msgId));
@@ -622,6 +669,7 @@ export function useChatConnection(userType: 'admin' | 'friend') {
     deleteMessage,
     deleteMessages,
     clearMessages,
+    emergencyWipe,
     handleTyping,
     startCall,
     acceptCall,

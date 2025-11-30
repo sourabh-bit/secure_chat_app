@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from "react";
-import { Send, Paperclip, Mic, Video, Phone, Lock, CheckCheck, Smile, PhoneOff, Menu, X, Trash2, Square, Check, Settings } from "lucide-react";
+import { Send, Paperclip, Mic, Video, Phone, Lock, CheckCheck, Check, Smile, PhoneOff, Menu, X, Trash2, Square, Settings, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, formatDistanceToNow } from "date-fns";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -28,6 +28,7 @@ interface Message {
   timestamp: Date;
   type: 'text' | 'image' | 'video' | 'audio';
   mediaUrl?: string;
+  status?: 'sending' | 'sent' | 'delivered' | 'read';
 }
 
 const MessageItem = memo(({ 
@@ -145,7 +146,13 @@ const MessageItem = memo(({
           msg.sender === 'me' ? "text-primary-foreground/70" : "text-muted-foreground"
         )}>
           <span className="text-[10px]">{format(new Date(msg.timestamp), 'h:mm a')}</span>
-          {msg.sender === 'me' && <CheckCheck size={12} />}
+          {msg.sender === 'me' && (
+            msg.status === 'sending' ? <Clock size={12} className="opacity-60" /> :
+            msg.status === 'sent' ? <Check size={12} /> :
+            msg.status === 'delivered' ? <CheckCheck size={12} /> :
+            msg.status === 'read' ? <CheckCheck size={12} className="text-blue-400" /> :
+            <CheckCheck size={12} />
+          )}
         </div>
       </div>
     </div>
@@ -186,6 +193,7 @@ export function ChatLayout({ onLock, currentUser }: ChatLayoutProps) {
     sendMessage,
     deleteMessage,
     clearMessages,
+    emergencyWipe,
     handleTyping,
     startCall,
     acceptCall,
@@ -209,12 +217,11 @@ export function ChatLayout({ onLock, currentUser }: ChatLayoutProps) {
     const channel = new BroadcastChannel('secure_chat_messages');
     channel.onmessage = (event) => {
       if (event.data.type === 'nuke') {
-        clearMessages();
-        toast({ title: "Chat Cleared" });
+        emergencyWipe();
       }
     };
     return () => channel.close();
-  }, [clearMessages, toast]);
+  }, [emergencyWipe]);
 
   useEffect(() => {
     if (scrollRef.current) {
