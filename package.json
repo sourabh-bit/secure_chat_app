@@ -6,8 +6,8 @@
   "scripts": {
     "dev:client": "vite dev --port 5000",
     "dev": "tsx server/index.ts",
-    "build": "echo \"No build step for backend\"",
-    "start": "NODE_ENV=production tsx server/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server/index.js",
     "check": "tsc",
     "db:push": "drizzle-kit push"
   },
