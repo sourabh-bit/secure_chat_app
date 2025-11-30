@@ -158,7 +158,11 @@ export async function registerRoutes(
     const { gatekeeper_key, admin_pass, friend_pass, current_password } = req.body;
     
     // Verify current password before allowing changes
-    if (current_password !== passwords.admin_pass && current_password !== passwords.friend_pass) {
+    // Allow if current_password matches either admin or friend password
+    const isValidPassword = current_password === passwords.admin_pass || 
+                            current_password === passwords.friend_pass;
+    
+    if (!isValidPassword) {
       return res.status(401).json({ error: 'Invalid current password' });
     }
     

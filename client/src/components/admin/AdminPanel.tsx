@@ -23,27 +23,69 @@ export function AdminPanel({ isOpen, onClose, onNuke }: AdminPanelProps) {
   const { toast } = useToast();
   
   const [activeTab, setActiveTab] = useState<'settings' | 'data' | 'logs'>('settings');
-  const [gatekeeperKey, setGatekeeperKey] = useState(localStorage.getItem('gatekeeper_key') || 'secret');
-  const [adminPass, setAdminPass] = useState(localStorage.getItem('admin_pass') || '1234');
-  const [friendPass, setFriendPass] = useState(localStorage.getItem('friend_pass') || '5678');
+  const [gatekeeperKey, setGatekeeperKey] = useState('secret');
+  const [adminPass, setAdminPass] = useState('admin123');
+  const [friendPass, setFriendPass] = useState('friend123');
+  const [originalAdminPass, setOriginalAdminPass] = useState('admin123'); // Store original for verification
   const [expiry, setExpiry] = useState(localStorage.getItem('message_expiry') || '24h');
   const [showNukeConfirm, setShowNukeConfirm] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [connectionLogs, setConnectionLogs] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
 
+  // Fetch passwords from server when panel opens
   useEffect(() => {
     if (isOpen) {
       setMessages(JSON.parse(localStorage.getItem('chat_messages') || '[]'));
       setConnectionLogs(JSON.parse(localStorage.getItem('connection_logs') || '[]'));
+      
+      // Fetch current passwords from server
+      fetch('/api/auth/passwords', { cache: 'no-store' })
+        .then(res => res.json())
+        .then(data => {
+          setGatekeeperKey(data.gatekeeper_key || 'secret');
+          setAdminPass(data.admin_pass || 'admin123');
+          setFriendPass(data.friend_pass || 'friend123');
+          setOriginalAdminPass(data.admin_pass || 'admin123'); // Store for verification
+        })
+        .catch(err => {
+          console.error('Failed to load passwords:', err);
+        });
     }
   }, [isOpen]);
 
-  const handleSave = () => {
-    localStorage.setItem('gatekeeper_key', gatekeeperKey);
-    localStorage.setItem('admin_pass', adminPass);
-    localStorage.setItem('friend_pass', friendPass);
-    localStorage.setItem('message_expiry', expiry);
-    toast({ title: "Settings Saved" });
+  const handleSave = async () => {
+    setLoading(true);
+    try {
+      // Save passwords to server using original admin password for verification
+      const response = await fetch('/api/auth/passwords', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          gatekeeper_key: gatekeeperKey,
+          admin_pass: adminPass,
+          friend_pass: friendPass,
+          current_password: originalAdminPass // Use original password for verification
+        })
+      });
+      
+      if (!response.ok) {
+        toast({ variant: "destructive", title: "Failed to save settings" });
+        return;
+      }
+      
+      // Update original password reference after successful save
+      setOriginalAdminPass(adminPass);
+      
+      // Save expiry to localStorage (client-side only feature)
+      localStorage.setItem('message_expiry', expiry);
+      
+      toast({ title: "Settings Saved!" });
+    } catch (err) {
+      toast({ variant: "destructive", title: "Failed to save settings" });
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleNuke = () => {
