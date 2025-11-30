@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
+import webpush from "web-push";
 
 interface ClientData {
   ws: WebSocket;
@@ -25,9 +26,65 @@ interface PendingMessage {
   status: 'sent' | 'delivered' | 'read';
 }
 
+interface PushSubscriptionData {
+  endpoint: string;
+  keys: {
+    p256dh: string;
+    auth: string;
+  };
+}
+
 const rooms = new Map<string, RoomData>();
 const pendingMessages = new Map<string, PendingMessage[]>();
 const messageStatus = new Map<string, 'sent' | 'delivered' | 'read'>();
+
+// Store push subscriptions by user type
+const pushSubscriptions = new Map<string, PushSubscriptionData[]>();
+
+// VAPID keys for web push (generate your own for production)
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || 'BLBz8nXqJ3H5VSJgNPaF1N7p0_VfQKZwzPvHRmqIKvE4EHlpjBqeGMx5PaJk9R7VxTkNh3n_WbE2OqK8yXlH8Aw';
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || 'dGnKX_4nRqH5VSJgNPaF1N7p0_VfQKZwzPvHRmqIKvE';
+
+// Configure web-push
+webpush.setVapidDetails(
+  'mailto:admin@securechat.com',
+  VAPID_PUBLIC_KEY,
+  VAPID_PRIVATE_KEY
+);
+
+// Send push notification to offline users
+const sendPushNotification = async (userType: string, title: string, body: string) => {
+  const subscriptions = pushSubscriptions.get(userType) || [];
+  const validSubscriptions: PushSubscriptionData[] = [];
+  
+  for (const subscription of subscriptions) {
+    try {
+      await webpush.sendNotification(
+        {
+          endpoint: subscription.endpoint,
+          keys: subscription.keys
+        },
+        JSON.stringify({ title, body, tag: 'chat-message' })
+      );
+      validSubscriptions.push(subscription);
+    } catch (error: any) {
+      if (error.statusCode === 410 || error.statusCode === 404) {
+        // Subscription expired or invalid, don't keep it
+        console.log('Removing invalid push subscription');
+      } else {
+        validSubscriptions.push(subscription);
+        console.error('Push notification error:', error.message);
+      }
+    }
+  }
+  
+  // Update with only valid subscriptions
+  if (validSubscriptions.length > 0) {
+    pushSubscriptions.set(userType, validSubscriptions);
+  } else {
+    pushSubscriptions.delete(userType);
+  }
+};
 
 // Server-side password storage (synced across all devices)
 const passwords = {
@@ -73,6 +130,57 @@ export async function registerRoutes(
     if (gatekeeper_key) passwords.gatekeeper_key = gatekeeper_key;
     if (admin_pass) passwords.admin_pass = admin_pass;
     if (friend_pass) passwords.friend_pass = friend_pass;
+    
+    res.json({ success: true });
+  });
+
+  // Push notification endpoints
+  app.get('/api/push/vapid-key', (req, res) => {
+    res.json({ publicKey: VAPID_PUBLIC_KEY });
+  });
+
+  app.post('/api/push/subscribe', (req, res) => {
+    const { subscription, userType } = req.body;
+    
+    if (!subscription || !userType) {
+      return res.status(400).json({ error: 'Missing subscription or userType' });
+    }
+    
+    // Only allow admin to subscribe for push notifications
+    if (userType !== 'admin') {
+      return res.status(403).json({ error: 'Push notifications only available for admin' });
+    }
+    
+    const existing = pushSubscriptions.get('admin') || [];
+    
+    // Avoid duplicate subscriptions
+    const isDuplicate = existing.some(s => s.endpoint === subscription.endpoint);
+    if (!isDuplicate) {
+      existing.push({
+        endpoint: subscription.endpoint,
+        keys: subscription.keys
+      });
+      pushSubscriptions.set('admin', existing);
+    }
+    
+    res.json({ success: true });
+  });
+
+  app.post('/api/push/unsubscribe', (req, res) => {
+    const { endpoint, userType } = req.body;
+    
+    if (!endpoint || !userType) {
+      return res.status(400).json({ error: 'Missing endpoint or userType' });
+    }
+    
+    const existing = pushSubscriptions.get(userType) || [];
+    const filtered = existing.filter(s => s.endpoint !== endpoint);
+    
+    if (filtered.length > 0) {
+      pushSubscriptions.set(userType, filtered);
+    } else {
+      pushSubscriptions.delete(userType);
+    }
     
     res.json({ success: true });
   });
@@ -233,6 +341,17 @@ export async function registerRoutes(
               targetUserType,
               status: 'sent'
             });
+            
+            // Send push notification to admin only (when friend sends message and admin is offline)
+            if (targetUserType === 'admin') {
+              const msgPreview = data.messageType === 'text' 
+                ? (data.text?.length > 50 ? data.text.substring(0, 50) + '...' : data.text)
+                : data.messageType === 'image' ? '📷 Photo'
+                : data.messageType === 'video' ? '🎥 Video'
+                : data.messageType === 'audio' ? '🎤 Voice message'
+                : 'New message';
+              sendPushNotification('admin', `💬 ${data.senderName || 'Friend'}`, msgPreview);
+            }
             
             ws.send(JSON.stringify({
               type: "message-queued",

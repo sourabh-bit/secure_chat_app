@@ -132,7 +132,7 @@ export function ActiveCallOverlay({
             muted
             playsInline
             className="w-full h-full object-cover"
-            style={{ transform: 'scaleX(-1)' }}
+            style={{ transform: 'none' }}
           />
           {isVideoOff && (
             <div className="absolute inset-0 flex items-center justify-center bg-slate-800">
