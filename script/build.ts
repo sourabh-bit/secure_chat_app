@@ -1,6 +1,11 @@
 import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
 import { rm, readFile } from "fs/promises";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const rootDir = path.resolve(__dirname, "..");
 
 // server deps to bundle to reduce openat(2) syscalls
 // which helps cold start times
@@ -58,6 +63,9 @@ async function buildAll() {
     minify: true,
     external: externals,
     logLevel: "info",
+    alias: {
+      "@shared": path.resolve(rootDir, "shared"),
+    },
   });
 }
 

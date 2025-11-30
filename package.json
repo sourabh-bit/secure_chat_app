@@ -6,13 +6,11 @@
   "scripts": {
     "dev:client": "vite dev --port 5000",
     "dev": "tsx server/index.ts",
-    "build": "tsc -p tsconfig.server.json",
-    "start": "node dist/server/index.js",
-    "check": "tsc -p tsconfig.server.json",
+    "build": "tsx script/build.ts",
+    "start": "node dist/index.cjs",
+    "check": "tsc",
     "db:push": "drizzle-kit push"
   },
-
-
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
     "@jridgewell/trace-mapping": "^0.3.25",
@@ -77,7 +75,6 @@
     "wouter": "^3.3.5",
     "ws": "^8.18.0",
     "zod": "^3.25.76",
-    "tsx": "^4.20.5",
     "zod-validation-error": "^3.4.0"
   },
   "devDependencies": {
@@ -100,6 +97,7 @@
     "esbuild": "^0.25.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.14",
+    "tsx": "^4.20.5",
     "typescript": "5.6.3",
     "vite": "^7.1.9"
   },

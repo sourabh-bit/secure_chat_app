@@ -9,3 +9,5 @@ services:
         value: production
       - key: PORT
         value: 10000
+      - key: TSC_COMPILE_ON_ERROR
+        value: true
