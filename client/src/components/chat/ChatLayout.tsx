@@ -460,11 +460,11 @@ export function ChatLayout({ onLock, currentUser, showAdminPanel, onAdminPanelTo
       // Reset height to auto to get accurate scrollHeight
       el.style.height = "auto";
       const scrollHeight = el.scrollHeight;
-      const newHeight = Math.min(Math.max(scrollHeight, 24), 120);
+      const newHeight = Math.min(Math.max(scrollHeight, 24), 200);
       el.style.height = `${newHeight}px`;
 
       // Enable scrolling only when at max height
-      el.style.overflowY = scrollHeight > 120 ? "auto" : "hidden";
+      el.style.overflowY = scrollHeight > 200 ? "auto" : "hidden";
     },
     [handleTyping]
   );
@@ -1225,16 +1225,16 @@ export function ChatLayout({ onLock, currentUser, showAdminPanel, onAdminPanelTo
                         className={cn(
                           "flex-1 bg-transparent border-none outline-none",
                           "text-[15px] leading-[1.4] disabled:opacity-50",
-                          "w-full resize-none overflow-hidden",
+                          "w-full resize-none overflow-y-auto overflow-x-hidden",
                           "placeholder:text-muted-foreground/60",
-                          "text-foreground break-words",
+                          "text-foreground break-words whitespace-pre-wrap",
                           "py-1.5 transition-all duration-200 ease-in-out",
-                          "focus:outline-none focus:ring-0"
+                          "focus:outline-none focus:ring-0",
+                          "max-h-[150px] md:max-h-[200px]"
                         )}
                         style={{
                           height: "auto",
                           minHeight: "24px",
-                          maxHeight: "120px",
                         }}
                         onFocus={() => setIsTextareaFocused(true)}
                         onBlur={() => setIsTextareaFocused(false)}
