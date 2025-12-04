@@ -45,6 +45,10 @@ async function buildAll() {
   console.log("building client...");
   await viteBuild();
 
+  // Ensure server directory exists
+  const { mkdir } = await import("fs/promises");
+  await mkdir("dist/server", { recursive: true });
+
   console.log("building server...");
   const pkg = JSON.parse(await readFile("package.json", "utf-8"));
   const allDeps = [
