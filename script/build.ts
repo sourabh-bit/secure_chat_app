@@ -62,7 +62,7 @@ async function buildAll() {
     platform: "node",
     bundle: true,
     format: "cjs",
-    outfile: "dist/server/index.js",
+    outfile: "dist/index.js",
     define: {
       "process.env.NODE_ENV": '"production"',
     },
@@ -79,10 +79,10 @@ async function buildAll() {
   // Verify the output file exists
   const { stat } = await import("fs/promises");
   try {
-    const stats = await stat("dist/server/index.js");
-    console.log("dist/server/index.js created, size:", stats.size, "bytes");
+    const stats = await stat("dist/index.js");
+    console.log("dist/index.js created, size:", stats.size, "bytes");
   } catch (e) {
-    console.error("ERROR: dist/server/index.js was not created!");
+    console.error("ERROR: dist/index.js was not created!");
     process.exit(1);
   }
 }
