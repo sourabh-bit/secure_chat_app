@@ -666,11 +666,9 @@ export function ChatLayout({ onLock, currentUser, showAdminPanel, onAdminPanelTo
   );
 
   return (
-    <div className="fixed inset-0 flex w-full bg-muted/60 dark:bg-background text-foreground font-sans overflow-hidden justify-center">
-      {/* Centered container with max width */}
+    <div className="w-full h-full flex justify-center bg-background overflow-hidden">
       <div className="w-full max-w-[1400px] h-full flex">
-        {/* Main layout wrapper */}
-        <div className="flex w-full h-full flex-col md:flex-row bg-background dark:bg-zinc-900 shadow-lg md:shadow-xl md:rounded-2xl overflow-hidden">
+        <div className="flex w-full h-full flex-col md:flex-row overflow-hidden">
         {/* Incoming Call Dialog */}
         <Dialog
           open={!!incomingCall}
@@ -861,7 +859,7 @@ export function ChatLayout({ onLock, currentUser, showAdminPanel, onAdminPanelTo
         {/* Sidebar */}
         <div
           className={cn(
-            "w-full md:w-[350px] h-full border-r border-gray-800 flex flex-col bg-background z-50 transition-transform duration-300 ease-out",
+            "w-full md:w-[350px] h-full border-r border-border flex flex-col bg-background z-50 transition-transform duration-300 ease-out",
             "fixed md:relative inset-y-0 left-0",
             showSidebar ? "translate-x-0" : "-translate-x-full md:translate-x-0"
           )}
@@ -1233,7 +1231,7 @@ export function ChatLayout({ onLock, currentUser, showAdminPanel, onAdminPanelTo
                           "text-foreground break-words whitespace-pre-wrap",
                           "py-1.5 transition-all duration-200 ease-in-out",
                           "focus:outline-none focus:ring-0",
-                          "max-h-[150px] md:max-h-[200px]"
+                          "max-h-[150px]"
                         )}
                         style={{
                           height: "auto",
