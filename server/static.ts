@@ -10,10 +10,18 @@ export function serveStatic(app: Express) {
     );
   }
 
+  // Serve static files normally (allows caching for JS/CSS with hashed filenames)
   app.use(express.static(distPath));
 
-  // fall through to index.html if the file doesn't exist
-  app.use("*", (_req, res) => {
+  // No caching for index.html
+  app.get("/", (req, res) => {
+    res.setHeader("Cache-Control", "no-store, must-revalidate");
+    res.sendFile(path.resolve(distPath, "index.html"));
+  });
+
+  // Fallback for SPA routes
+  app.get("*", (req, res) => {
+    res.setHeader("Cache-Control", "no-store, must-revalidate");
     res.sendFile(path.resolve(distPath, "index.html"));
   });
 }
