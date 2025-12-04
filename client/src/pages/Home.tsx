@@ -5,14 +5,10 @@ import { LoginOverlay } from "@/components/auth/LoginOverlay";
 import { ChatLayout } from "@/components/chat/ChatLayout";
 import { AdminPanel } from "@/components/admin/AdminPanel";
 import { Toaster } from "@/components/ui/toaster";
-import { Shield } from "lucide-react";
-
-type AppMode = 'disguise' | 'chat';
-type DisguiseType = 'pyq' | 'calc';
 
 export default function Home() {
-  const [mode, setMode] = useState<AppMode>('disguise');
-  const [disguiseType, setDisguiseType] = useState<DisguiseType>('pyq'); 
+  const [mode, setMode] = useState<'disguise' | 'chat'>('disguise');
+  const [disguiseType, setDisguiseType] = useState<'pyq' | 'calc'>('pyq');
   const [showLogin, setShowLogin] = useState(false);
   const [currentUser, setCurrentUser] = useState<'admin' | 'friend'>('friend');
   const [showAdminPanel, setShowAdminPanel] = useState(false);
@@ -24,105 +20,98 @@ export default function Home() {
     }
   }, []);
 
-  // Auto-lock after inactivity
+  // Auto lock on inactivity
   useEffect(() => {
     let timeout: NodeJS.Timeout;
-    
+
     const resetTimer = () => {
       clearTimeout(timeout);
-      if (mode === 'chat') {
+      if (mode === "chat") {
         timeout = setTimeout(() => {
-          setMode('disguise');
+          setMode("disguise");
           setShowLogin(false);
         }, 1000 * 60 * 5);
       }
     };
 
-    window.addEventListener('mousemove', resetTimer);
-    window.addEventListener('keypress', resetTimer);
-    window.addEventListener('touchstart', resetTimer);
-    
+    window.addEventListener("mousemove", resetTimer);
+    window.addEventListener("keypress", resetTimer);
+    window.addEventListener("touchstart", resetTimer);
+
     return () => {
       clearTimeout(timeout);
-      window.removeEventListener('mousemove', resetTimer);
-      window.removeEventListener('keypress', resetTimer);
-      window.removeEventListener('touchstart', resetTimer);
+      window.removeEventListener("mousemove", resetTimer);
+      window.removeEventListener("keypress", resetTimer);
+      window.removeEventListener("touchstart", resetTimer);
     };
   }, [mode]);
 
-  const handleUnlockTrigger = () => {
-    setShowLogin(true);
-  };
+  const handleUnlockTrigger = () => setShowLogin(true);
 
   const handleLoginSuccess = (userType: 'admin' | 'friend') => {
     setCurrentUser(userType);
+    setMode("chat");
     setShowAdminPanel(false);
     setShowLogin(false);
-    setMode('chat');
-    
-    const logs = JSON.parse(localStorage.getItem('connection_logs') || '[]');
-    logs.push({ timestamp: new Date().toISOString(), event: 'Logged in', user: userType });
-    localStorage.setItem('connection_logs', JSON.stringify(logs.slice(-100)));
   };
 
   const handlePanicLock = () => {
-    setMode('disguise');
+    setMode("disguise");
     setShowLogin(false);
     setShowAdminPanel(false);
-    setCurrentUser('friend');
+    setCurrentUser("friend");
   };
 
-  // Keyboard shortcut for Admin Panel
+  // Admin shortcut
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (mode === 'chat' && currentUser === 'admin' && e.ctrlKey && e.shiftKey && e.key === 'A') {
+    const handler = (e: KeyboardEvent) => {
+      if (mode === "chat" && currentUser === "admin" && e.ctrlKey && e.shiftKey && e.key === "A") {
         setShowAdminPanel(true);
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
   }, [mode, currentUser]);
 
   return (
-    <div className="min-h-screen w-full overflow-hidden relative">
-      {/* Disguise Layer */}
-      {mode === 'disguise' && (
-        <>
-          {disguiseType === 'pyq' ? (
-            <PYQView onUnlock={handleUnlockTrigger} />
-          ) : (
-            <CalculatorView onUnlock={handleUnlockTrigger} />
-          )}
-        </>
+    <div className="min-h-screen w-full bg-background overflow-hidden relative">
+
+      {/* disguise layer */}
+      {mode === "disguise" && (
+        disguiseType === "pyq"
+          ? <PYQView onUnlock={handleUnlockTrigger} />
+          : <CalculatorView onUnlock={handleUnlockTrigger} />
       )}
 
-      {/* Login Overlay */}
-      <LoginOverlay 
-        isOpen={showLogin} 
-        onSuccess={handleLoginSuccess} 
+      {/* login */}
+      <LoginOverlay
+        isOpen={showLogin}
+        onSuccess={handleLoginSuccess}
         onClose={() => setShowLogin(false)}
       />
 
-      {/* Chat Layer */}
-      {mode === 'chat' && (
-        <>
-          <ChatLayout
-            onLock={handlePanicLock}
-            currentUser={currentUser}
-            showAdminPanel={showAdminPanel}
-            onAdminPanelToggle={() => setShowAdminPanel(!showAdminPanel)}
-          />
-
-          {/* Admin Panel */}
-          {currentUser === 'admin' && (
-            <AdminPanel
-              isOpen={showAdminPanel}
-              onClose={() => setShowAdminPanel(false)}
+      {/* CHAT */}
+      {mode === "chat" && (
+        <div className="w-full h-full flex justify-center">
+          <div className="w-full max-w-[1400px] h-full flex overflow-hidden">
+            <ChatLayout
+              onLock={handlePanicLock}
+              currentUser={currentUser}
+              showAdminPanel={showAdminPanel}
+              onAdminPanelToggle={() => setShowAdminPanel(!showAdminPanel)}
             />
-          )}
-        </>
+          </div>
+        </div>
       )}
-      
+
+      {/* admin panel */}
+      {mode === "chat" && currentUser === "admin" && (
+        <AdminPanel
+          isOpen={showAdminPanel}
+          onClose={() => setShowAdminPanel(false)}
+        />
+      )}
+
       <Toaster />
     </div>
   );

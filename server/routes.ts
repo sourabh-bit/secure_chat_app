@@ -587,6 +587,7 @@ export async function registerRoutes(
                 mediaUrl: msg.mediaUrl,
                 timestamp: msg.timestamp,
                 senderName: msg.senderName,
+                sender: 'them',
                 status: 'delivered'
               }));
               messageIds.push(msg.id);
@@ -625,51 +626,66 @@ export async function registerRoutes(
           if (!room) return;
 
           try {
-            // Get current retention settings
-            const retention = await db.query.messageRetention.findFirst({
-              where: eq(schema.messageRetention.roomId, currentRoom)
-            });
+            // Save message to database if available
+            if (hasDatabase) {
+              // Get current retention settings
+              const retention = await db.query.messageRetention.findFirst({
+                where: eq(schema.messageRetention.roomId, currentRoom)
+              });
 
-            const retentionMode = retention?.retentionMode || 'forever';
-            let expiresAt: Date | null = null;
+              const retentionMode = retention?.retentionMode || 'forever';
+              let expiresAt: Date | null = null;
 
-            // Only set expiresAt for disappearing modes, not for "forever"
-            if (retentionMode === '1h') {
-              expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
-            } else if (retentionMode === '24h') {
-              expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+              // Only set expiresAt for disappearing modes, not for "forever"
+              if (retentionMode === '1h') {
+                expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+              } else if (retentionMode === '24h') {
+                expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+              }
+              // For 'after_seen' and 'forever', expiresAt remains null initially
+
+              // Save message to database
+              const senderId = myUserType === 'admin' ? adminUserId : friendUserId;
+              const messageData = {
+                id: data.id,
+                roomId: currentRoom,
+                senderId,
+                messageType: data.messageType || 'text',
+                text: data.text,
+                mediaUrl: data.mediaUrl,
+                replyToId: data.replyToId,
+                expiresAt,
+                timestamp: new Date(data.timestamp),
+              };
+
+              await db.insert(schema.messages).values(messageData);
             }
-            // For 'after_seen' and 'forever', expiresAt remains null initially
 
-            // Save message to database
-            const senderId = myUserType === 'admin' ? adminUserId : friendUserId;
-            const messageData = {
-              id: data.id,
-              roomId: currentRoom,
-              senderId,
-              messageType: data.messageType || 'text',
-              text: data.text,
-              mediaUrl: data.mediaUrl,
-              replyToId: data.replyToId,
-              expiresAt,
-              timestamp: new Date(data.timestamp),
-            };
-
-            await db.insert(schema.messages).values(messageData);
-
-            // Broadcast to all sessions of both users
+            // Broadcast to all sessions of peer users (they receive it as 'them')
             let peerOnline = false;
             room.clients.forEach((client, clientWs) => {
               if (client.userType !== myUserType && clientWs.readyState === WebSocket.OPEN) {
                 peerOnline = true;
-                clientWs.send(JSON.stringify({ ...data, status: 'delivered' }));
+                // Send to peer - explicitly set sender to 'them' so it appears on left side
+                clientWs.send(JSON.stringify({ 
+                  type: 'chat-message',
+                  ...data, 
+                  sender: 'them',
+                  status: 'delivered' 
+                }));
               }
             });
 
-            // Broadcast to all other sessions of same user
+            // Broadcast to all other sessions of same user (their own message synced)
             room.clients.forEach((client, clientWs) => {
               if (client.userType === myUserType && clientWs !== ws && clientWs.readyState === WebSocket.OPEN) {
-                clientWs.send(JSON.stringify({ ...data, sender: 'me', status: peerOnline ? 'delivered' : 'sent' }));
+                // Mark as 'me' so it appears on the right side for the sender's other devices
+                clientWs.send(JSON.stringify({ 
+                  type: 'chat-message',
+                  ...data, 
+                  sender: 'me', 
+                  status: peerOnline ? 'delivered' : 'sent' 
+                }));
               }
             });
 
@@ -691,6 +707,20 @@ export async function registerRoutes(
                 sendPushNotification('admin', `💬 ${data.senderName || 'Friend'}`, msgPreview);
               }
 
+              // Store pending message for offline user
+              const pendingKey = `${currentRoom}_${myUserType === 'admin' ? 'friend' : 'admin'}`;
+              const pending = pendingMessages.get(pendingKey) || [];
+              pending.push({
+                id: data.id,
+                text: data.text,
+                messageType: data.messageType || 'text',
+                mediaUrl: data.mediaUrl,
+                timestamp: Date.now(),
+                senderName: data.senderName || myProfile?.name || 'Unknown',
+                status: 'sent'
+              });
+              pendingMessages.set(pendingKey, pending);
+
               ws.send(JSON.stringify({
                 type: "message-queued",
                 id: data.id,
@@ -699,10 +729,27 @@ export async function registerRoutes(
             }
           } catch (error) {
             console.error('Failed to save message:', error);
-            ws.send(JSON.stringify({
-              type: "error",
-              message: "Failed to send message"
-            }));
+            // Still try to relay the message even if database fails
+            let peerOnline = false;
+            room.clients.forEach((client, clientWs) => {
+              if (client.userType !== myUserType && clientWs.readyState === WebSocket.OPEN) {
+                peerOnline = true;
+                clientWs.send(JSON.stringify({ 
+                  type: 'chat-message',
+                  ...data, 
+                  sender: 'them',
+                  status: 'delivered' 
+                }));
+              }
+            });
+            
+            if (peerOnline) {
+              ws.send(JSON.stringify({
+                type: 'message-status',
+                ids: [data.id],
+                status: 'delivered'
+              }));
+            }
           }
 
         } else if (type === "message-read" && currentRoom) {

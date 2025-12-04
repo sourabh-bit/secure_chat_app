@@ -226,7 +226,7 @@ export function useChatConnection(userType: 'admin' | 'friend') {
   }, [userType]);
   
   const [messages, setMessages] = useState<Message[]>(() => {
-    const saved = localStorage.getItem('chat_messages');
+    const saved = localStorage.getItem(`chat_messages_${userType}`);
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
@@ -234,7 +234,7 @@ export function useChatConnection(userType: 'admin' | 'friend') {
           return parsed.map((m: any) => ({ ...m, timestamp: new Date(m.timestamp) }));
         }
       } catch {
-        localStorage.removeItem('chat_messages');
+        localStorage.removeItem(`chat_messages_${userType}`);
       }
     }
     return [];
@@ -267,8 +267,8 @@ export function useChatConnection(userType: 'admin' | 'friend') {
   const sessionId = useRef<string>(`${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
 
   useEffect(() => {
-    localStorage.setItem('chat_messages', JSON.stringify(messages));
-  }, [messages]);
+    localStorage.setItem(`chat_messages_${userType}`, JSON.stringify(messages));
+  }, [messages, userType]);
 
   useEffect(() => {
     localStorage.setItem(`chat_my_profile_${userType}`, JSON.stringify({
@@ -503,13 +503,13 @@ export function useChatConnection(userType: 'admin' | 'friend') {
       case 'emergency-wipe':
         // Emergency wipe from server
         setMessages([]);
-        localStorage.removeItem('chat_messages');
+        localStorage.removeItem(`chat_messages_${userType}`);
         toast({ title: "🚨 All messages wiped", variant: "destructive" });
         break;
       
       case 'sync-request':
         // Another device of same user type is requesting our messages
-        const currentMessages = JSON.parse(localStorage.getItem('chat_messages') || '[]');
+        const currentMessages = JSON.parse(localStorage.getItem(`chat_messages_${userType}`) || '[]');
         sendSignal({
           type: 'sync-response',
           targetDeviceId: data.targetDeviceId,
@@ -590,8 +590,8 @@ export function useChatConnection(userType: 'admin' | 'friend') {
   const emergencyWipe = useCallback(() => {
     sendSignal({ type: 'emergency-wipe' });
     setMessages([]);
-    localStorage.removeItem('chat_messages');
-  }, [sendSignal]);
+    localStorage.removeItem(`chat_messages_${userType}`);
+  }, [sendSignal, userType]);
 
   const deleteMessage = useCallback((msgId: string) => {
     setMessages(prev => prev.filter(m => m.id !== msgId));

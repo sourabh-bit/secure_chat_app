@@ -182,6 +182,13 @@ html {
   outline-offset: 2px;
 }
 
+/* Remove focus ring from chat textarea */
+textarea.focus\:ring-0:focus,
+textarea.focus\:ring-0:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
 /* Touch action optimization for mobile */
 .touch-pan-y {
   touch-action: pan-y;
