@@ -106,27 +106,18 @@ export default function Home() {
       {/* Chat Layer */}
       {mode === 'chat' && (
         <>
-          <ChatLayout 
-            onLock={handlePanicLock} 
+          <ChatLayout
+            onLock={handlePanicLock}
             currentUser={currentUser}
+            showAdminPanel={showAdminPanel}
+            onAdminPanelToggle={() => setShowAdminPanel(!showAdminPanel)}
           />
-          
-          {/* Admin Panel Button - Fixed at top right, below header on mobile */}
-          {currentUser === 'admin' && (
-            <button 
-              onClick={() => setShowAdminPanel(true)}
-              className="fixed top-[60px] sm:top-4 right-2 sm:right-4 p-2 sm:p-2.5 rounded-lg bg-red-500 hover:bg-red-600 text-white shadow-lg z-40 transition-all flex items-center gap-1.5 text-xs sm:text-sm font-medium"
-            >
-              <Shield className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-              <span className="hidden xs:inline">Admin</span>
-            </button>
-          )}
-          
+
           {/* Admin Panel */}
           {currentUser === 'admin' && (
-            <AdminPanel 
-              isOpen={showAdminPanel} 
-              onClose={() => setShowAdminPanel(false)} 
+            <AdminPanel
+              isOpen={showAdminPanel}
+              onClose={() => setShowAdminPanel(false)}
             />
           )}
         </>

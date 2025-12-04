@@ -32,6 +32,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { useChatConnection } from "@/hooks/use-chat-connection";
+const FIXED_ROOM_ID = 'SECURE_CHAT_MAIN';
 import { useAudioRecorder } from "@/hooks/use-audio-recorder";
 import { ActiveCallOverlay } from "./ActiveCallOverlay";
 import { EmojiPicker } from "./EmojiPicker";
@@ -44,6 +45,8 @@ import { SettingsPanel } from "@/components/settings/SettingsPanel";
 interface ChatLayoutProps {
   onLock: () => void;
   currentUser: "admin" | "friend";
+  showAdminPanel: boolean;
+  onAdminPanelToggle: () => void;
 }
 
 interface Message {
@@ -72,20 +75,25 @@ const MessageItem = memo(
     onDelete,
     onMediaClick,
     onReply,
+    showMenu,
+    onCloseMenu,
   }: {
     msg: Message;
     isSelected: boolean;
     isSelectMode: boolean;
     onSelect: (id: string) => void;
-    onLongPress: (id: string) => void;
+    onLongPress: (id: string, event: React.MouseEvent | React.TouchEvent) => void;
     onRelease: () => void;
     onDelete: (id: string) => void;
     onMediaClick: (url: string, type: "image" | "video") => void;
     onReply: (msg: Message) => void;
+    showMenu: boolean;
+    onCloseMenu: () => void;
   }) => {
     const [swipeX, setSwipeX] = useState(0);
     const [startX, setStartX] = useState(0);
     const [isSwiping, setIsSwiping] = useState(false);
+    const [hasLongPressed, setHasLongPressed] = useState(false);
 
     const handleClick = useCallback(() => {
       if (isSelectMode) {
@@ -102,15 +110,50 @@ const MessageItem = memo(
     const handleTouchMove = useCallback((e: React.TouchEvent) => {
       if (!isSwiping || isSelectMode) return;
       const diff = e.touches[0].clientX - startX;
+      if (Math.abs(diff) > 10) {
+        // Cancel long-press if moved more than 10px
+        onRelease();
+        setHasLongPressed(false);
+      }
       const maxSwipe = msg.sender === "me" ? -60 : 60;
       if (msg.sender === "me" && diff < 0) {
         setSwipeX(Math.max(diff, maxSwipe));
       } else if (msg.sender !== "me" && diff > 0) {
         setSwipeX(Math.min(diff, maxSwipe));
       }
-    }, [isSwiping, startX, msg.sender, isSelectMode]);
+    }, [isSwiping, startX, msg.sender, isSelectMode, onRelease]);
 
     const handleTouchEnd = useCallback(() => {
+      if (Math.abs(swipeX) > 50 && !hasLongPressed) {
+        onReply(msg);
+      }
+      setSwipeX(0);
+      setIsSwiping(false);
+    }, [swipeX, msg, onReply, hasLongPressed]);
+
+    const handleMouseDown = useCallback((e: React.MouseEvent) => {
+      if (isSelectMode) return;
+      setStartX(e.clientX);
+      setIsSwiping(true);
+      onLongPress(msg.id, e);
+    }, [isSelectMode, msg.id, onLongPress]);
+
+    const handleMouseMove = useCallback((e: React.MouseEvent) => {
+      if (!isSwiping || isSelectMode) return;
+      const diff = e.clientX - startX;
+      if (Math.abs(diff) > 10) {
+        // Cancel long-press if moved more than 10px
+        onRelease();
+      }
+      const maxSwipe = msg.sender === "me" ? -60 : 60;
+      if (msg.sender === "me" && diff < 0) {
+        setSwipeX(Math.max(diff, maxSwipe));
+      } else if (msg.sender !== "me" && diff > 0) {
+        setSwipeX(Math.min(diff, maxSwipe));
+      }
+    }, [isSwiping, startX, msg.sender, isSelectMode, onRelease]);
+
+    const handleMouseUp = useCallback(() => {
       if (Math.abs(swipeX) > 50) {
         onReply(msg);
       }
@@ -128,15 +171,21 @@ const MessageItem = memo(
         onClick={handleClick}
         onTouchStart={(e) => {
           handleTouchStart(e);
-          !isSelectMode && onLongPress(msg.id);
+          !isSelectMode && onLongPress(msg.id, e);
         }}
         onTouchMove={handleTouchMove}
         onTouchEnd={() => {
           handleTouchEnd();
           onRelease();
         }}
-        onMouseDown={() => !isSelectMode && onLongPress(msg.id)}
-        onMouseUp={onRelease}
+        onMouseDown={(e) => {
+          handleMouseDown(e);
+        }}
+        onMouseMove={handleMouseMove}
+        onMouseUp={() => {
+          handleMouseUp();
+          onRelease();
+        }}
         onMouseLeave={onRelease}
       >
         {msg.sender !== "me" && swipeX > 0 && (
@@ -175,28 +224,18 @@ const MessageItem = memo(
           )}
           style={{ transform: `translateX(${swipeX}px)` }}
         >
-          {!isSelectMode && (
-            <div className={cn(
-              "absolute -top-2 opacity-0 group-hover:opacity-100 flex gap-1 z-10",
-              msg.sender === "me" ? "-left-2" : "-right-2"
-            )}>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onReply(msg);
-                }}
-                className="p-1.5 bg-secondary rounded-full transition-all hover:scale-110"
-              >
-                <Reply size={10} />
-              </button>
+          {showMenu && (
+            <div className="absolute -top-8 left-1/2 -translate-x-1/2 z-10 bg-background border border-border rounded-lg shadow-lg p-1">
               <button
                 onClick={(e) => {
                   e.stopPropagation();
                   onDelete(msg.id);
+                  onCloseMenu();
                 }}
-                className="p-1.5 bg-destructive rounded-full transition-all hover:scale-110"
+                className="flex items-center gap-1 px-2 py-1 text-sm hover:bg-secondary rounded"
               >
-                <Trash2 size={10} className="text-white" />
+                <Trash2 size={14} />
+                Delete
               </button>
             </div>
           )}
@@ -209,9 +248,9 @@ const MessageItem = memo(
                 : "bg-secondary border-primary"
             )}>
               <p className="font-medium opacity-80">
-                {msg.replyTo.sender === "me" ? "You" : "Them"}
+                {msg.replyTo?.sender === "me" ? "You" : "Them"}
               </p>
-              <p className="opacity-70 truncate">{msg.replyTo.text}</p>
+              <p className="opacity-70 truncate">{msg.replyTo?.text}</p>
             </div>
           )}
 
@@ -300,12 +339,14 @@ const MessageItem = memo(
 
 MessageItem.displayName = "MessageItem";
 
-export function ChatLayout({ onLock, currentUser }: ChatLayoutProps) {
+export function ChatLayout({ onLock, currentUser, showAdminPanel, onAdminPanelToggle }: ChatLayoutProps) {
   const { toast } = useToast();
   const [inputText, setInputText] = useState("");
   const [showProfileEditor, setShowProfileEditor] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [retentionMode, setRetentionMode] = useState<'forever' | 'after_seen' | '1h' | '24h'>('forever');
+  const [showRetentionSettings, setShowRetentionSettings] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState<{
     url: string;
     type: "image" | "video";
@@ -318,6 +359,9 @@ export function ChatLayout({ onLock, currentUser }: ChatLayoutProps) {
     new Set()
   );
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
+  const [isTextareaFocused, setIsTextareaFocused] = useState(false);
+  const [showMenuFor, setShowMenuFor] = useState<string | null>(null);
+  const [hasLongPressedFor, setHasLongPressedFor] = useState<string | null>(null);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -341,6 +385,11 @@ export function ChatLayout({ onLock, currentUser }: ChatLayoutProps) {
     messages,
     sendMessage,
     deleteMessage,
+    deleteMessages = (msgIds: string[]) => {
+      // Fallback implementation: remove from local state only
+      setMessages(prev => prev.filter(m => !msgIds.includes(m.id)));
+      toast({ title: "Messages deleted locally" });
+    },
     clearMessages,
     emergencyWipe,
     handleTyping,
@@ -369,6 +418,22 @@ export function ChatLayout({ onLock, currentUser }: ChatLayoutProps) {
     return () => channel.close();
   }, [emergencyWipe]);
 
+  // Load current retention settings
+  useEffect(() => {
+    const loadRetentionSettings = async () => {
+      try {
+        const response = await fetch(`/api/retention/${FIXED_ROOM_ID}`);
+        if (response.ok) {
+          const data = await response.json();
+          setRetentionMode(data.retentionMode);
+        }
+      } catch (error) {
+        console.error('Failed to load retention settings:', error);
+      }
+    };
+    loadRetentionSettings();
+  }, []);
+
   const scrollToBottom = useCallback(() => {
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
@@ -385,41 +450,31 @@ export function ChatLayout({ onLock, currentUser }: ChatLayoutProps) {
     }
   }, [selectedMessages.size, isSelectMode]);
 
-  // WhatsApp-like auto-resize directly in onChange
+  // WhatsApp-like auto-resize with smooth transitions
   const handleInputChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       const el = e.target;
       setInputText(el.value);
       handleTyping();
-      
+
       // Reset height to auto to get accurate scrollHeight
-      el.style.height = "24px";
+      el.style.height = "auto";
       const scrollHeight = el.scrollHeight;
       const newHeight = Math.min(Math.max(scrollHeight, 24), 120);
       el.style.height = `${newHeight}px`;
-      
+
       // Enable scrolling only when at max height
       el.style.overflowY = scrollHeight > 120 ? "auto" : "hidden";
     },
     [handleTyping]
   );
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        handleSendText();
-      }
-    },
-    []
-  );
-
   const handleSendText = useCallback(
     (e?: React.FormEvent) => {
       e?.preventDefault();
       if (!inputText.trim()) return;
-      sendMessage({ 
-        text: inputText, 
+      sendMessage({
+        text: inputText,
         type: "text",
         replyTo: replyingTo ? {
           id: replyingTo.id,
@@ -434,6 +489,16 @@ export function ChatLayout({ onLock, currentUser }: ChatLayoutProps) {
       }
     },
     [inputText, sendMessage, replyingTo]
+  );
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        handleSendText();
+      }
+    },
+    [handleSendText]
   );
 
   const handleReply = useCallback((msg: Message) => {
@@ -488,8 +553,10 @@ export function ChatLayout({ onLock, currentUser }: ChatLayoutProps) {
     }
   }, [stopRecording, sendMessage, recordingTime]);
 
-  const handleMessageLongPress = useCallback((msgId: string) => {
+  const handleMessageLongPress = useCallback((msgId: string, event: React.MouseEvent | React.TouchEvent) => {
     const timer = setTimeout(() => {
+      setShowMenuFor(msgId);
+      setHasLongPressedFor(msgId);
       setIsSelectMode(true);
       setSelectedMessages(new Set([msgId]));
     }, 500);
@@ -501,6 +568,8 @@ export function ChatLayout({ onLock, currentUser }: ChatLayoutProps) {
       clearTimeout(longPressTimer);
       setLongPressTimer(null);
     }
+    setShowMenuFor(null);
+    setHasLongPressedFor(null);
   }, [longPressTimer]);
 
   const handleSelectMessage = useCallback((msgId: string) => {
@@ -516,7 +585,7 @@ export function ChatLayout({ onLock, currentUser }: ChatLayoutProps) {
   }, []);
 
   const handleDeleteSelected = useCallback(() => {
-    selectedMessages.forEach((id) => deleteMessage(id));
+    deleteMessages(Array.from(selectedMessages));
     toast({
       title: `${selectedMessages.size} message${
         selectedMessages.size > 1 ? "s" : ""
@@ -524,7 +593,7 @@ export function ChatLayout({ onLock, currentUser }: ChatLayoutProps) {
     });
     setSelectedMessages(new Set());
     setIsSelectMode(false);
-  }, [selectedMessages, deleteMessage, toast]);
+  }, [selectedMessages, deleteMessages, toast]);
 
   const handleCancelSelect = useCallback(() => {
     setSelectedMessages(new Set());
@@ -579,6 +648,8 @@ export function ChatLayout({ onLock, currentUser }: ChatLayoutProps) {
           onDelete={setMessageToDelete}
           onMediaClick={handleMediaClick}
           onReply={handleReply}
+          showMenu={showMenuFor === msg.id}
+          onCloseMenu={() => setShowMenuFor(null)}
         />
       )),
     [
@@ -590,13 +661,14 @@ export function ChatLayout({ onLock, currentUser }: ChatLayoutProps) {
       handleMessageRelease,
       handleMediaClick,
       handleReply,
+      showMenuFor,
     ]
   );
 
   return (
     <div className="fixed inset-0 flex w-full bg-muted/60 dark:bg-background text-foreground font-sans overflow-hidden justify-center">
       {/* Outer shell for desktop centering */}
-      <div className="relative flex h-full w-full max-w-5xl bg-background dark:bg-zinc-900 shadow-lg md:shadow-xl md:rounded-2xl overflow-hidden">
+      <div className="relative flex h-full w-full bg-background dark:bg-zinc-900 shadow-lg md:shadow-xl md:rounded-2xl overflow-hidden">
         {/* Incoming Call Dialog */}
         <Dialog
           open={!!incomingCall}
@@ -703,6 +775,70 @@ export function ChatLayout({ onLock, currentUser }: ChatLayoutProps) {
           userType={currentUser}
         />
 
+        {/* Retention Settings Modal */}
+        <Dialog open={showRetentionSettings} onOpenChange={setShowRetentionSettings}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Message Retention</DialogTitle>
+              <DialogDescription>
+                Choose how long messages should be kept before disappearing.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Retention Mode</label>
+                <select
+                  value={retentionMode}
+                  onChange={(e) => setRetentionMode(e.target.value as any)}
+                  className="w-full px-3 py-2 border border-input bg-background rounded-md"
+                >
+                  <option value="forever">Off (Keep messages forever)</option>
+                  <option value="after_seen">After Seen</option>
+                  <option value="1h">1 Hour</option>
+                  <option value="24h">24 Hours</option>
+                </select>
+              </div>
+              <div className="text-sm text-muted-foreground">
+                {retentionMode === 'forever' && 'Messages will never disappear.'}
+                {retentionMode === 'after_seen' && 'Messages disappear after both users have seen them.'}
+                {retentionMode === '1h' && 'Messages disappear 1 hour after being sent.'}
+                {retentionMode === '24h' && 'Messages disappear 24 hours after being sent.'}
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setShowRetentionSettings(false)}
+                className="px-4 py-2 text-sm border border-input rounded-md hover:bg-secondary"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    const response = await fetch(`/api/retention/${FIXED_ROOM_ID}`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ retentionMode }),
+                    });
+                    if (response.ok) {
+                      setShowRetentionSettings(false);
+                      toast({ title: "Retention setting updated" });
+                    } else {
+                      throw new Error('Failed to update retention setting');
+                    }
+                  } catch (error) {
+                    console.error('Error updating retention setting:', error);
+                    toast({ variant: "destructive", title: "Failed to update retention setting" });
+                  }
+                }}
+                className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90"
+              >
+                Save
+              </button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
         {/* Hidden File Input */}
         <input
           type="file"
@@ -728,63 +864,72 @@ export function ChatLayout({ onLock, currentUser }: ChatLayoutProps) {
           )}
         >
           <div className="p-3 sm:p-4 border-b border-border flex justify-between items-center">
-            <div
-              className="flex items-center gap-2 sm:gap-3 cursor-pointer hover:opacity-80 flex-1 min-w-0 transition-opacity"
-              onClick={() => {
-                setShowProfileEditor(true);
-                setShowSidebar(false);
-              }}
-            >
-              <div className="relative shrink-0">
-                <Avatar className="h-9 w-9 sm:h-10 sm:w-10 border border-border">
-                  <AvatarImage src={myProfile.avatar} />
-                  <AvatarFallback
-                    className={cn(
-                      "text-white text-sm",
-                      currentUser === "admin" ? "bg-red-500" : "bg-blue-500"
-                    )}
-                  >
-                    {myProfile.name.charAt(0).toUpperCase()}
-                  </AvatarFallback>
-                </Avatar>
-              </div>
-              <div className="min-w-0">
-                <span className="font-semibold text-sm truncate block">
-                  {myProfile.name}
-                </span>
-                <p className="text-xs text-muted-foreground flex items-center gap-1">
-                  <span
-                    className={cn(
-                      "w-1.5 h-1.5 rounded-full shrink-0 transition-colors",
-                      isConnected ? "bg-green-500" : "bg-yellow-500"
-                    )}
-                  />
-                  <span className="truncate">
-                    {isConnected ? "Connected" : "Connecting..."}
+            <div className="flex items-center gap-2 sm:gap-3 flex-1 min-w-0">
+              <div
+                className="flex items-center gap-2 sm:gap-3 cursor-pointer hover:opacity-80 flex-1 min-w-0 transition-opacity"
+                onClick={() => {
+                  setShowProfileEditor(true);
+                  setShowSidebar(false);
+                }}
+              >
+                <div className="relative shrink-0">
+                  <Avatar className="h-9 w-9 sm:h-10 sm:w-10 border border-border">
+                    <AvatarImage src={myProfile.avatar} />
+                    <AvatarFallback
+                      className={cn(
+                        "text-white text-sm",
+                        currentUser === "admin" ? "bg-red-500" : "bg-blue-500"
+                      )}
+                    >
+                      {myProfile.name.charAt(0).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                </div>
+                <div className="min-w-0">
+                  <span className="font-semibold text-sm truncate block">
+                    {myProfile.name}
                   </span>
-                </p>
+                  <p className="text-xs text-muted-foreground flex items-center gap-1">
+                    <span
+                      className={cn(
+                        "w-1.5 h-1.5 rounded-full shrink-0 transition-colors",
+                        isConnected ? "bg-green-500" : "bg-yellow-500"
+                      )}
+                    />
+                    <span className="truncate">
+                      {isConnected ? "Connected" : "Connecting..."}
+                    </span>
+                  </p>
+                </div>
               </div>
             </div>
             <div className="flex items-center gap-1">
+              {currentUser === 'admin' && (
+                <button
+                  onClick={() => {
+                    onAdminPanelToggle();
+                    setShowSidebar(false);
+                  }}
+                  className="p-2 hover:bg-secondary rounded-lg transition-all duration-200 ease-out hover:scale-105 active:scale-95"
+                  title="Admin Panel"
+                >
+                  <Shield size={18} />
+                </button>
+              )}
               <button
                 onClick={() => {
                   setShowSettings(true);
                   setShowSidebar(false);
                 }}
-                className="p-2 hover:bg-secondary rounded-lg transition-colors"
+                className="p-2 hover:bg-secondary rounded-lg transition-all duration-200 ease-out hover:scale-105 active:scale-95"
                 title="Settings"
               >
                 <Settings size={18} />
               </button>
               <ThemeToggle />
-              {currentUser === "admin" && (
-                <div className="p-1.5 bg-primary/10 rounded-lg" title="Admin">
-                  <Shield size={16} className="text-primary" />
-                </div>
-              )}
               <button
                 onClick={() => setShowSidebar(false)}
-                className="p-2 md:hidden hover:bg-secondary rounded-lg transition-colors"
+                className="p-2 md:hidden hover:bg-secondary rounded-lg transition-all duration-200 ease-out hover:scale-105 active:scale-95"
               >
                 <X size={20} />
               </button>
@@ -868,7 +1013,7 @@ export function ChatLayout({ onLock, currentUser }: ChatLayoutProps) {
                       e.stopPropagation();
                       setShowSidebar(true);
                     }}
-                    className="p-2 md:hidden hover:bg-secondary rounded-lg shrink-0 transition-colors"
+                    className="p-2 md:hidden hover:bg-secondary rounded-lg shrink-0 transition-all duration-200 ease-out hover:scale-105 active:scale-95"
                   >
                     <Menu size={20} />
                   </button>
@@ -1067,7 +1212,7 @@ export function ChatLayout({ onLock, currentUser }: ChatLayoutProps) {
                         </button>
                       </div>
                     ) : (
-                      <textarea
+                  <textarea
                         ref={textareaRef}
                         value={inputText}
                         onChange={handleInputChange}
@@ -1077,19 +1222,22 @@ export function ChatLayout({ onLock, currentUser }: ChatLayoutProps) {
                         }
                         disabled={!isConnected}
                         rows={1}
-                        className="
-                          flex-1 bg-transparent border-none outline-none
-                          text-[15px] leading-[1.4] disabled:opacity-50
-                          w-full resize-none overflow-hidden
-                          placeholder:text-muted-foreground/60
-                          text-foreground break-words
-                          focus:outline-none focus:ring-0 py-1.5
-                        "
+                        className={cn(
+                          "flex-1 bg-transparent border-none outline-none",
+                          "text-[15px] leading-[1.4] disabled:opacity-50",
+                          "w-full resize-none overflow-hidden",
+                          "placeholder:text-muted-foreground/60",
+                          "text-foreground break-words",
+                          "py-1.5 transition-all duration-200 ease-in-out",
+                          "focus:outline-none focus:ring-0"
+                        )}
                         style={{
                           height: "auto",
                           minHeight: "24px",
                           maxHeight: "120px",
                         }}
+                        onFocus={() => setIsTextareaFocused(true)}
+                        onBlur={() => setIsTextareaFocused(false)}
                       />
                     )}
                   </div>

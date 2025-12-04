@@ -5,12 +5,19 @@ import webpush from "web-push";
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import bcrypt from 'bcrypt';
+import postgres from 'postgres';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import { eq, and, isNotNull, lt } from 'drizzle-orm';
+import * as schema from '../shared/schema';
 
 interface ClientData {
   ws: WebSocket;
   profile?: { name: string; avatar: string };
-  userType?: string;
+  userId?: string;
+  sessionId?: string;
   deviceId?: string;
+  userType?: string;
 }
 
 interface RoomData {
@@ -18,23 +25,62 @@ interface RoomData {
   createdAt: Date;
 }
 
-interface PendingMessage {
-  id: string;
-  text: string;
-  messageType: string;
-  mediaUrl?: string;
-  timestamp: string;
-  senderName: string;
-  targetUserType: string;
-  status: 'sent' | 'delivered' | 'read';
-}
+// Database connection (optional)
+let db: any = null;
+let hasDatabase = false;
 
-interface PushSubscriptionData {
-  endpoint: string;
-  keys: {
-    p256dh: string;
-    auth: string;
-  };
+// Global user IDs (initialized on startup)
+let adminUserId: string;
+let friendUserId: string;
+
+// Initialize database connection (optional)
+async function initializeDatabase() {
+  if (!process.env.DATABASE_URL) {
+    hasDatabase = false;
+    adminUserId = 'admin-temp-id';
+    friendUserId = 'friend-temp-id';
+    return;
+  }
+
+  try {
+    const client = postgres(process.env.DATABASE_URL);
+    db = drizzle(client, { schema });
+    hasDatabase = true;
+
+    // Create admin user if not exists
+    let adminUser = await db.query.users.findFirst({
+      where: eq(schema.users.username, 'admin')
+    });
+
+    if (!adminUser) {
+      adminUser = await db.insert(schema.users).values({
+        username: 'admin',
+        password: await hashPassword('admin123'),
+      }).returning().then(rows => rows[0]);
+    }
+
+    // Create friend user if not exists
+    let friendUser = await db.query.users.findFirst({
+      where: eq(schema.users.username, 'friend')
+    });
+
+    if (!friendUser) {
+      friendUser = await db.insert(schema.users).values({
+        username: 'friend',
+        password: await hashPassword('friend123'),
+      }).returning().then(rows => rows[0]);
+    }
+
+    adminUserId = adminUser.id;
+    friendUserId = friendUser.id;
+
+    // Database connected and users initialized
+  } catch (error) {
+    console.error('Failed to connect to database, falling back to memory-only mode:', error);
+    hasDatabase = false;
+    adminUserId = 'admin-temp-id';
+    friendUserId = 'friend-temp-id';
+  }
 }
 
 interface PasswordData {
@@ -49,11 +95,29 @@ interface PasswordData {
   initialized: boolean;
 }
 
+interface InMemoryMessage {
+  id: string;
+  text: string;
+  messageType: string;
+  mediaUrl?: string;
+  timestamp: number;
+  senderName: string;
+  status?: 'sent' | 'delivered' | 'read';
+}
+
+interface PushSubscriptionData {
+  endpoint: string;
+  keys: {
+    p256dh: string;
+    auth: string;
+  };
+}
+
 const rooms = new Map<string, RoomData>();
-const pendingMessages = new Map<string, PendingMessage[]>();
+const pendingMessages = new Map<string, InMemoryMessage[]>();
 const messageStatus = new Map<string, 'sent' | 'delivered' | 'read'>();
 
-const pushSubscriptions = new Map<string, PushSubscriptionData[]>();
+const pushSubscriptions = new Map<string, any[]>();
 
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || 'BLBz8nXqJ3H5VSJgNPaF1N7p0_VfQKZwzPvHRmqIKvE4EHlpjBqeGMx5PaJk9R7VxTkNh3n_WbE2OqK8yXlH8Aw';
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || 'dGnKX_4nRqH5VSJgNPaF1N7p0_VfQKZwzPvHRmqIKvE';
@@ -80,7 +144,7 @@ const sendPushNotification = async (userType: string, title: string, body: strin
       validSubscriptions.push(subscription);
     } catch (error: any) {
       if (error.statusCode === 410 || error.statusCode === 404) {
-        console.log('Removing invalid push subscription');
+        // Removing invalid push subscription
       } else {
         validSubscriptions.push(subscription);
         console.error('Push notification error:', error.message);
@@ -95,12 +159,18 @@ const sendPushNotification = async (userType: string, title: string, body: strin
   }
 };
 
-const hashPassword = (password: string): string => {
-  return crypto.createHash('sha256').update(password).digest('hex');
+const hashPassword = async (password: string): Promise<string> => {
+  const saltRounds = 12;
+  return await bcrypt.hash(password, saltRounds);
 };
 
-const verifyPassword = (password: string, hash: string): boolean => {
-  return hashPassword(password) === hash;
+const verifyPassword = async (password: string, hash: string): Promise<boolean> => {
+  try {
+    return await bcrypt.compare(password, hash);
+  } catch (error) {
+    console.error('Password verification error:', error);
+    return false;
+  }
 };
 
 const DEFAULT_PASSWORDS: PasswordData = {
@@ -164,9 +234,9 @@ const loadPasswords = () => {
             if (data.gatekeeper_changed_at) passwords.gatekeeper_changed_at = data.gatekeeper_changed_at;
             passwords.initialized = true;
             PASSWORD_FILE = loc;
-            console.log('✓ Passwords loaded from:', loc);
-            console.log('  Admin password changed at:', passwords.admin_pass_changed_at || 'never');
-            console.log('  Friend password changed at:', passwords.friend_pass_changed_at || 'never');
+            // Passwords loaded from loc
+            // Admin password changed at: passwords.admin_pass_changed_at || 'never'
+            // Friend password changed at: passwords.friend_pass_changed_at || 'never'
             return;
           }
         }
@@ -175,7 +245,7 @@ const loadPasswords = () => {
       }
     }
     
-    console.log('No saved passwords found, using defaults (first-time setup)');
+    // No saved passwords found, using defaults (first-time setup)
     passwords = { ...DEFAULT_PASSWORDS };
   } catch (err) {
     console.error('Failed to load passwords:', err);
@@ -206,7 +276,7 @@ const savePasswords = (): boolean => {
     };
     
     fs.writeFileSync(PASSWORD_FILE, JSON.stringify(dataToSave, null, 2));
-    console.log('✓ Passwords saved to:', PASSWORD_FILE);
+    // Passwords saved to PASSWORD_FILE
     return true;
   } catch (err) {
     console.error('Failed to save passwords to', PASSWORD_FILE, ':', err);
@@ -278,7 +348,7 @@ export async function registerRoutes(
     });
   });
   
-  app.post('/api/auth/passwords', (req, res) => {
+  app.post('/api/auth/passwords', async (req, res) => {
     const { gatekeeper_key, admin_pass, friend_pass, current_password } = req.body;
     
     const isValidPassword = current_password === passwords.admin_pass || 
@@ -299,14 +369,14 @@ export async function registerRoutes(
     
     if (admin_pass && admin_pass !== passwords.admin_pass) {
       passwords.admin_pass = admin_pass;
-      passwords.admin_pass_hash = hashPassword(admin_pass);
+      passwords.admin_pass_hash = await hashPassword(admin_pass);
       passwords.admin_pass_changed_at = now;
       changed = true;
     }
-    
+
     if (friend_pass && friend_pass !== passwords.friend_pass) {
       passwords.friend_pass = friend_pass;
-      passwords.friend_pass_hash = hashPassword(friend_pass);
+      passwords.friend_pass_hash = await hashPassword(friend_pass);
       passwords.friend_pass_changed_at = now;
       changed = true;
     }
@@ -362,21 +432,81 @@ export async function registerRoutes(
 
   app.post('/api/push/unsubscribe', (req, res) => {
     const { endpoint, userType } = req.body;
-    
+
     if (!endpoint || !userType) {
       return res.status(400).json({ error: 'Missing endpoint or userType' });
     }
-    
+
     const existing = pushSubscriptions.get(userType) || [];
     const filtered = existing.filter(s => s.endpoint !== endpoint);
-    
+
     if (filtered.length > 0) {
       pushSubscriptions.set(userType, filtered);
     } else {
       pushSubscriptions.delete(userType);
     }
-    
+
     res.json({ success: true });
+  });
+
+  // Message retention settings API
+  app.get('/api/retention/:roomId', async (req, res) => {
+    if (!hasDatabase) {
+      return res.json({
+        retentionMode: 'forever' // Always forever for in-memory storage
+      });
+    }
+
+    try {
+      const { roomId } = req.params;
+      const retention = await db.query.messageRetention.findFirst({
+        where: eq(schema.messageRetention.roomId, roomId)
+      });
+
+      res.json({
+        retentionMode: retention?.retentionMode || 'forever'
+      });
+    } catch (error) {
+      console.error('Failed to get retention settings:', error);
+      res.status(500).json({ error: 'Failed to get retention settings' });
+    }
+  });
+
+  app.post('/api/retention/:roomId', async (req, res) => {
+    if (!hasDatabase) {
+      return res.json({ success: true, retentionMode: 'forever' });
+    }
+
+    try {
+      const { roomId } = req.params;
+      const { retentionMode } = req.body;
+
+      if (!['forever', 'after_seen', '1h', '24h'].includes(retentionMode)) {
+        return res.status(400).json({ error: 'Invalid retention mode' });
+      }
+
+      // For demo purposes, we'll use admin as the setter
+      const setByUserId = adminUserId;
+
+      await db.insert(schema.messageRetention).values({
+        roomId,
+        retentionMode,
+        setByUserId,
+        updatedAt: new Date(),
+      }).onConflictDoUpdate({
+        target: schema.messageRetention.roomId,
+        set: {
+          retentionMode,
+          setByUserId,
+          updatedAt: new Date(),
+        }
+      });
+
+      res.json({ success: true, retentionMode });
+    } catch (error) {
+      console.error('Failed to update retention settings:', error);
+      res.status(500).json({ error: 'Failed to update retention settings' });
+    }
   });
 
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
@@ -387,7 +517,7 @@ export async function registerRoutes(
     let myUserType: string | undefined;
     let myDeviceId: string | undefined;
 
-    ws.on("message", (message: string) => {
+  ws.on("message", async (message: string) => {
       try {
         const data = JSON.parse(message.toString());
         const { type, roomId } = data;
@@ -493,73 +623,161 @@ export async function registerRoutes(
         } else if (type === "chat-message" && currentRoom) {
           const room = rooms.get(currentRoom);
           if (!room) return;
-          
-          let peerOnline = false;
-          const targetUserType = myUserType === 'admin' ? 'friend' : 'admin';
-          
-          room.clients.forEach((client, clientWs) => {
-            if (client.userType === targetUserType && clientWs.readyState === WebSocket.OPEN) {
-              peerOnline = true;
-              clientWs.send(JSON.stringify({ ...data, status: 'delivered' }));
-            }
-          });
-          
-          room.clients.forEach((client, clientWs) => {
-            if (client.userType === myUserType && clientWs !== ws && clientWs.readyState === WebSocket.OPEN) {
-              clientWs.send(JSON.stringify({ ...data, sender: 'me', status: peerOnline ? 'delivered' : 'sent' }));
-            }
-          });
-          
-          if (peerOnline) {
-            ws.send(JSON.stringify({
-              type: 'message-status',
-              ids: [data.id],
-              status: 'delivered'
-            }));
-          } else {
-            const roomPendingKey = `${currentRoom}_${targetUserType}`;
-            if (!pendingMessages.has(roomPendingKey)) {
-              pendingMessages.set(roomPendingKey, []);
-            }
-            
-            pendingMessages.get(roomPendingKey)!.push({
-              id: data.id,
-              text: data.text,
-              messageType: data.messageType || 'text',
-              mediaUrl: data.mediaUrl,
-              timestamp: data.timestamp,
-              senderName: data.senderName,
-              targetUserType,
-              status: 'sent'
+
+          try {
+            // Get current retention settings
+            const retention = await db.query.messageRetention.findFirst({
+              where: eq(schema.messageRetention.roomId, currentRoom)
             });
-            
-            if (targetUserType === 'admin') {
-              const msgPreview = data.messageType === 'text' 
-                ? (data.text?.length > 50 ? data.text.substring(0, 50) + '...' : data.text)
-                : data.messageType === 'image' ? '📷 Photo'
-                : data.messageType === 'video' ? '🎥 Video'
-                : data.messageType === 'audio' ? '🎤 Voice message'
-                : 'New message';
-              sendPushNotification('admin', `💬 ${data.senderName || 'Friend'}`, msgPreview);
+
+            const retentionMode = retention?.retentionMode || 'forever';
+            let expiresAt: Date | null = null;
+
+            // Only set expiresAt for disappearing modes, not for "forever"
+            if (retentionMode === '1h') {
+              expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+            } else if (retentionMode === '24h') {
+              expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
             }
-            
-            ws.send(JSON.stringify({
-              type: "message-queued",
+            // For 'after_seen' and 'forever', expiresAt remains null initially
+
+            // Save message to database
+            const senderId = myUserType === 'admin' ? adminUserId : friendUserId;
+            const messageData = {
               id: data.id,
-              status: 'sent'
+              roomId: currentRoom,
+              senderId,
+              messageType: data.messageType || 'text',
+              text: data.text,
+              mediaUrl: data.mediaUrl,
+              replyToId: data.replyToId,
+              expiresAt,
+              timestamp: new Date(data.timestamp),
+            };
+
+            await db.insert(schema.messages).values(messageData);
+
+            // Broadcast to all sessions of both users
+            let peerOnline = false;
+            room.clients.forEach((client, clientWs) => {
+              if (client.userType !== myUserType && clientWs.readyState === WebSocket.OPEN) {
+                peerOnline = true;
+                clientWs.send(JSON.stringify({ ...data, status: 'delivered' }));
+              }
+            });
+
+            // Broadcast to all other sessions of same user
+            room.clients.forEach((client, clientWs) => {
+              if (client.userType === myUserType && clientWs !== ws && clientWs.readyState === WebSocket.OPEN) {
+                clientWs.send(JSON.stringify({ ...data, sender: 'me', status: peerOnline ? 'delivered' : 'sent' }));
+              }
+            });
+
+            if (peerOnline) {
+              ws.send(JSON.stringify({
+                type: 'message-status',
+                ids: [data.id],
+                status: 'delivered'
+              }));
+            } else {
+              // Send push notification for offline messages
+              if (myUserType === 'friend') {
+                const msgPreview = data.messageType === 'text'
+                  ? (data.text?.length > 50 ? data.text.substring(0, 50) + '...' : data.text)
+                  : data.messageType === 'image' ? '📷 Photo'
+                  : data.messageType === 'video' ? '🎥 Video'
+                  : data.messageType === 'audio' ? '🎤 Voice message'
+                  : 'New message';
+                sendPushNotification('admin', `💬 ${data.senderName || 'Friend'}`, msgPreview);
+              }
+
+              ws.send(JSON.stringify({
+                type: "message-queued",
+                id: data.id,
+                status: 'sent'
+              }));
+            }
+          } catch (error) {
+            console.error('Failed to save message:', error);
+            ws.send(JSON.stringify({
+              type: "error",
+              message: "Failed to send message"
             }));
           }
 
         } else if (type === "message-read" && currentRoom) {
           const room = rooms.get(currentRoom);
           if (!room) return;
-          
-          const senderType = myUserType === 'admin' ? 'friend' : 'admin';
-          broadcastToUserType(room, senderType, {
-            type: 'message-status',
-            ids: data.ids,
-            status: 'read'
-          });
+
+          try {
+            // Mark messages as read in database if available
+            if (hasDatabase) {
+              const userId = myUserType === 'admin' ? adminUserId : friendUserId;
+              for (const messageId of data.ids) {
+                await db.insert(schema.messageReads).values({
+                  messageId,
+                  userId,
+                  readAt: new Date(),
+                }).onConflictDoNothing();
+              }
+
+              // Check for "after_seen" retention mode and mark messages for deletion
+              const retention = await db.query.messageRetention.findFirst({
+                where: eq(schema.messageRetention.roomId, currentRoom)
+              });
+
+              if (retention?.retentionMode === 'after_seen') {
+                // Check if both users have read the message
+                for (const messageId of data.ids) {
+                  const message = await db.query.messages.findFirst({
+                    where: eq(schema.messages.id, messageId)
+                  });
+
+                  if (message && !message.expiresAt) {
+                    // Check if both users have read this message
+                    const adminRead = await db.query.messageReads.findFirst({
+                      where: and(
+                        eq(schema.messageReads.messageId, messageId),
+                        eq(schema.messageReads.userId, adminUserId)
+                      )
+                    });
+
+                    const friendRead = await db.query.messageReads.findFirst({
+                      where: and(
+                        eq(schema.messageReads.messageId, messageId),
+                        eq(schema.messageReads.userId, friendUserId)
+                      )
+                    });
+
+                    if (adminRead && friendRead) {
+                      // Both users have read, set expiresAt to now
+                      await db.update(schema.messages)
+                        .set({ expiresAt: new Date() })
+                        .where(eq(schema.messages.id, messageId));
+                    }
+                  }
+                }
+              }
+            } else {
+              // Mark messages as read in memory
+              for (const messageId of data.ids) {
+                messageStatus.set(messageId, 'read');
+              }
+            }
+
+            // Broadcast read status to all sessions
+            room.clients.forEach((client, clientWs) => {
+              if (client.userType !== myUserType && clientWs.readyState === WebSocket.OPEN) {
+                clientWs.send(JSON.stringify({
+                  type: 'message-status',
+                  ids: data.ids,
+                  status: 'read'
+                }));
+              }
+            });
+          } catch (error) {
+            console.error('Failed to mark messages as read:', error);
+          }
 
         } else if (type === "sync-response" && currentRoom) {
           const room = rooms.get(currentRoom);
@@ -574,14 +792,53 @@ export async function registerRoutes(
             }
           });
 
+        } else if (type === "message-delete" && currentRoom) {
+          const room = rooms.get(currentRoom);
+          if (!room) return;
+
+          try {
+            // Mark message as deleted in database
+            const userId = myUserType === 'admin' ? adminUserId : friendUserId;
+            await db.update(schema.messages)
+              .set({
+                isDeleted: true,
+                deletedAt: new Date(),
+                deletedById: userId,
+              })
+              .where(eq(schema.messages.id, data.id));
+
+            // Broadcast delete to all sessions
+            room.clients.forEach((client, clientWs) => {
+              if (clientWs.readyState === WebSocket.OPEN) {
+                clientWs.send(JSON.stringify({
+                  type: 'message-deleted',
+                  id: data.id,
+                }));
+              }
+            });
+          } catch (error) {
+            console.error('Failed to delete message:', error);
+          }
+
         } else if (type === "emergency-wipe" && currentRoom) {
           const room = rooms.get(currentRoom);
           if (!room) return;
-          
-          pendingMessages.delete(`${currentRoom}_admin`);
-          pendingMessages.delete(`${currentRoom}_friend`);
-          
-          broadcastToAll(room, { type: 'emergency-wipe' });
+
+          try {
+            // Mark all messages as deleted in database
+            const userId = myUserType === 'admin' ? adminUserId : friendUserId;
+            await db.update(schema.messages)
+              .set({
+                isDeleted: true,
+                deletedAt: new Date(),
+                deletedById: userId,
+              })
+              .where(eq(schema.messages.roomId, currentRoom));
+
+            broadcastToAll(room, { type: 'emergency-wipe' });
+          } catch (error) {
+            console.error('Failed to wipe messages:', error);
+          }
 
         } else if (currentRoom && rooms.has(currentRoom)) {
           const room = rooms.get(currentRoom)!;
@@ -632,6 +889,62 @@ export async function registerRoutes(
     ws.on("error", (error) => {
       console.error("WebSocket error:", error);
     });
+  });
+
+  // Cleanup scheduler for expired messages (only for disappearing modes and when database is available)
+  const cleanupExpiredMessages = async () => {
+    if (!hasDatabase) return;
+
+    try {
+      const now = new Date();
+      const expiredMessages = await db.query.messages.findMany({
+        where: and(
+          isNotNull(schema.messages.expiresAt),
+          lt(schema.messages.expiresAt, now),
+          eq(schema.messages.isDeleted, false)
+        )
+      });
+
+      if (expiredMessages.length > 0) {
+        // Cleaning up expiredMessages.length expired messages
+
+        // Mark messages as deleted
+        await db.update(schema.messages)
+          .set({
+            isDeleted: true,
+            deletedAt: now,
+          })
+          .where(and(
+            isNotNull(schema.messages.expiresAt),
+            lt(schema.messages.expiresAt, now),
+            eq(schema.messages.isDeleted, false)
+          ));
+
+        // Broadcast deletion to connected clients
+        for (const message of expiredMessages) {
+          const room = rooms.get(message.roomId);
+          if (room) {
+            broadcastToAll(room, {
+              type: 'message-deleted',
+              id: message.id,
+            });
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error during message cleanup:', error);
+    }
+  };
+
+  // Initialize database and start cleanup scheduler
+  initializeDatabase().then(() => {
+    if (hasDatabase) {
+      // Run cleanup every 5 minutes
+      setInterval(cleanupExpiredMessages, 5 * 60 * 1000);
+
+      // Run cleanup on startup
+      cleanupExpiredMessages();
+    }
   });
 
   return httpServer;

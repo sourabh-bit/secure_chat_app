@@ -168,11 +168,11 @@ const logConnectionEvent = (user: string, action: string) => {
 
 export function useChatConnection(userType: 'admin' | 'friend') {
   const { toast } = useToast();
-  
+
   // Run migration on first load
-  useState(() => {
+  useEffect(() => {
     migrateLocalStorage(userType);
-  });
+  }, [userType]);
   
   const [isConnected, setIsConnected] = useState(false);
   const [peerConnected, setPeerConnected] = useState(false);
@@ -228,7 +228,14 @@ export function useChatConnection(userType: 'admin' | 'friend') {
   const [messages, setMessages] = useState<Message[]>(() => {
     const saved = localStorage.getItem('chat_messages');
     if (saved) {
-      return JSON.parse(saved).map((m: any) => ({ ...m, timestamp: new Date(m.timestamp) }));
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.map((m: any) => ({ ...m, timestamp: new Date(m.timestamp) }));
+        }
+      } catch {
+        localStorage.removeItem('chat_messages');
+      }
     }
     return [];
   });
@@ -255,6 +262,9 @@ export function useChatConnection(userType: 'admin' | 'friend') {
     localStorage.setItem('device_id', id);
     return id;
   })());
+
+  // Session ID for this connection
+  const sessionId = useRef<string>(`${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
 
   useEffect(() => {
     localStorage.setItem('chat_messages', JSON.stringify(messages));
@@ -303,12 +313,13 @@ export function useChatConnection(userType: 'admin' | 'friend') {
     wsRef.current = ws;
 
     ws.onopen = () => {
-      ws.send(JSON.stringify({ 
-        type: 'join', 
+      ws.send(JSON.stringify({
+        type: 'join',
         roomId: FIXED_ROOM_ID,
         profile: { name: myProfile.name, avatar: myProfile.avatar },
         userType: userType,
-        deviceId: deviceId.current
+        deviceId: deviceId.current,
+        sessionId: sessionId.current
       }));
       setIsConnected(true);
       if (reconnectTimeoutRef.current) {
@@ -517,7 +528,7 @@ export function useChatConnection(userType: 'admin' | 'friend') {
                 ...m,
                 timestamp: new Date(m.timestamp)
               }));
-            
+
             if (newMessages.length > 0) {
               const merged = [...prev, ...newMessages].sort(
                 (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
@@ -527,6 +538,11 @@ export function useChatConnection(userType: 'admin' | 'friend') {
             return prev;
           });
         }
+        break;
+
+      case 'message-deleted':
+        // Remove deleted message from local state
+        setMessages(prev => prev.filter(m => m.id !== data.id));
         break;
     }
   };
@@ -584,7 +600,8 @@ export function useChatConnection(userType: 'admin' | 'friend') {
   const deleteMessages = useCallback((msgIds: string[]) => {
     const idSet = new Set(msgIds);
     setMessages(prev => prev.filter(m => !idSet.has(m.id)));
-  }, []);
+    msgIds.forEach(id => sendSignal({ type: 'message-delete', id }));
+  }, [sendSignal]);
 
   const getMediaConstraints = (mode: 'voice' | 'video') => {
     return {
@@ -820,6 +837,7 @@ export function useChatConnection(userType: 'admin' | 'friend') {
   const clearMessages = () => {
     setMessages([]);
     localStorage.removeItem('chat_messages');
+    sendSignal({ type: 'emergency-wipe' });
   };
 
   useEffect(() => {
@@ -857,6 +875,8 @@ export function useChatConnection(userType: 'admin' | 'friend') {
     localStream,
     remoteStream,
     isMuted,
-    isVideoOff
+    isVideoOff,
+    deviceId: deviceId.current,
+    sessionId: sessionId.current
   };
 }

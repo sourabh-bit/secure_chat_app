@@ -79,8 +79,7 @@ export function AdminPanel({ isOpen, onClose, onNuke }: AdminPanelProps) {
         body: JSON.stringify({
           gatekeeper_key: gatekeeperKey,
           admin_pass: adminPass,
-          friend_pass: friendPass,
-          current_password: originalAdminPass
+          friend_pass: friendPass
         })
       });
       

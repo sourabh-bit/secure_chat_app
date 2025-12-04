@@ -1,0 +1,5 @@
+- [x] Update PYQView title to "JEE Mains 2023 - Paper 1"
+- [x] Update sidebar to Maths topics only
+- [x] Replace dummyQuestions with 28 unique 11th grade Maths JEE Mains questions for total 30 questions
+- [x] Adjust scrolling padding to make it more like homepage (increase pb-32 to pb-64)
+- [x] Update sidebar title to "Maths Archive"
