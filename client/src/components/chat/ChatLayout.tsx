@@ -667,8 +667,10 @@ export function ChatLayout({ onLock, currentUser, showAdminPanel, onAdminPanelTo
 
   return (
     <div className="fixed inset-0 flex w-full bg-muted/60 dark:bg-background text-foreground font-sans overflow-hidden justify-center">
-      {/* Outer shell for desktop centering */}
-      <div className="relative flex h-full w-full bg-background dark:bg-zinc-900 shadow-lg md:shadow-xl md:rounded-2xl overflow-hidden">
+      {/* Centered container with max width */}
+      <div className="w-full max-w-[1400px] h-full flex">
+        {/* Main layout wrapper */}
+        <div className="flex w-full h-full flex-col md:flex-row bg-background dark:bg-zinc-900 shadow-lg md:shadow-xl md:rounded-2xl overflow-hidden">
         {/* Incoming Call Dialog */}
         <Dialog
           open={!!incomingCall}
@@ -859,7 +861,8 @@ export function ChatLayout({ onLock, currentUser, showAdminPanel, onAdminPanelTo
         {/* Sidebar */}
         <div
           className={cn(
-            "fixed md:relative inset-y-0 left-0 w-72 sm:w-80 border-r border-border flex flex-col bg-background z-50 transition-transform duration-300 ease-out",
+            "w-full md:w-[350px] h-full border-r border-gray-800 flex flex-col bg-background z-50 transition-transform duration-300 ease-out",
+            "fixed md:relative inset-y-0 left-0",
             showSidebar ? "translate-x-0" : "-translate-x-full md:translate-x-0"
           )}
         >
@@ -1088,7 +1091,7 @@ export function ChatLayout({ onLock, currentUser, showAdminPanel, onAdminPanelTo
           {/* Messages Area */}
           <div
             ref={scrollRef}
-            className="flex-1 overflow-y-auto overscroll-contain py-3 space-y-2 sm:space-y-3"
+            className="flex-1 overflow-y-auto px-4 py-3"
             style={{ WebkitOverflowScrolling: "touch" }}
           >
             {messages.length === 0 && (
@@ -1277,6 +1280,7 @@ export function ChatLayout({ onLock, currentUser, showAdminPanel, onAdminPanelTo
               </form>
             </div>
           </div>
+        </div>
         </div>
       </div>
     </div>
