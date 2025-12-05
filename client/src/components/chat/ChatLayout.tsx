@@ -307,41 +307,79 @@ export function ChatLayout({
     [sendMessage]
   );
 
+  const uploadToCloudinary = useCallback(async (file: File): Promise<string | null> => {
+    try {
+      const reader = new FileReader();
+      const base64Promise = new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+      });
+      reader.readAsDataURL(file);
+      const base64Data = await base64Promise;
+
+      const mediaType = file.type.startsWith('video/') ? 'video' : file.type.startsWith('audio/') ? 'audio' : 'image';
+      
+      const response = await fetch('/api/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: base64Data, type: mediaType }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Upload failed');
+      }
+
+      const result = await response.json();
+      return result.url;
+    } catch (error) {
+      console.error('Upload error:', error);
+      toast({ variant: 'destructive', title: 'Failed to upload media' });
+      return null;
+    }
+  }, [toast]);
+
   const handleCamera = useCallback(() => {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/*';
     input.capture = 'environment';
-    input.onchange = (e) => {
+    input.onchange = async (e) => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (file) {
-        const url = URL.createObjectURL(file);
-        sendMessage({ type: 'image', mediaUrl: url, text: '' });
+        toast({ title: 'Uploading image...' });
+        const url = await uploadToCloudinary(file);
+        if (url) {
+          sendMessage({ type: 'image', mediaUrl: url, text: '' });
+        }
       }
     };
     input.click();
     setShowMediaOptions(false);
-  }, [sendMessage]);
+  }, [sendMessage, uploadToCloudinary, toast]);
 
   const handleGallery = useCallback(() => {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/*,video/*';
     input.multiple = true;
-    input.onchange = (e) => {
+    input.onchange = async (e) => {
       const files = (e.target as HTMLInputElement).files;
-      if (files) {
+      if (files && files.length > 0) {
+        toast({ title: `Uploading ${files.length} file(s)...` });
         for (let i = 0; i < files.length; i++) {
           const file = files[i];
-          const url = URL.createObjectURL(file);
-          const type = file.type.startsWith('image/') ? 'image' : 'video';
-          sendMessage({ type, mediaUrl: url, text: '' });
+          const url = await uploadToCloudinary(file);
+          if (url) {
+            const type = file.type.startsWith('image/') ? 'image' : 'video';
+            sendMessage({ type, mediaUrl: url, text: '' });
+          }
         }
       }
     };
     input.click();
     setShowMediaOptions(false);
-  }, [sendMessage]);
+  }, [sendMessage, uploadToCloudinary, toast]);
 
 
 
@@ -355,15 +393,20 @@ export function ChatLayout({
   }, [startRecording, toast]);
 
   const handleStopRecording = useCallback(async () => {
-    const audioUrl = await stopRecording();
-    if (audioUrl) {
-      sendMessage({
-        type: "audio",
-        mediaUrl: audioUrl,
-        text: `🎤 Voice (0:${recordingTime.toString().padStart(2, "0")})`,
-      });
+    const audioBlob = await stopRecording();
+    if (audioBlob) {
+      toast({ title: 'Uploading voice message...' });
+      const audioFile = new File([audioBlob], 'voice.webm', { type: 'audio/webm' });
+      const url = await uploadToCloudinary(audioFile);
+      if (url) {
+        sendMessage({
+          type: "audio",
+          mediaUrl: url,
+          text: `🎤 Voice (0:${recordingTime.toString().padStart(2, "0")})`,
+        });
+      }
     }
-  }, [stopRecording, sendMessage, recordingTime]);
+  }, [stopRecording, sendMessage, recordingTime, uploadToCloudinary, toast]);
 
   // long press -> select mode (with haptic feedback on supported devices)
   const handleMessageLongPress = useCallback((msgId: string) => {

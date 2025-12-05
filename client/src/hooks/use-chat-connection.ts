@@ -418,13 +418,12 @@ export function useChatConnection(userType: 'admin' | 'friend') {
   const getMediaConstraints = (mode: 'voice' | 'video') => {
     return {
       audio: {
-        echoCancellation: { exact: true },
-        noiseSuppression: { exact: true },
-        autoGainControl: { exact: true },
+        echoCancellation: { ideal: true },
+        noiseSuppression: { ideal: true },
+        autoGainControl: { ideal: true },
         sampleRate: { ideal: 48000 },
-        channelCount: { exact: 1 },
-        latency: { ideal: 0.01 },
-        suppressLocalAudioPlayback: true
+        channelCount: { ideal: 1 },
+        latency: { ideal: 0.01 }
       },
       video:
         mode === 'video'
@@ -441,8 +440,12 @@ export function useChatConnection(userType: 'admin' | 'friend') {
   const createPeerConnection = useCallback((stream: MediaStream) => {
     const peer = new RTCPeerConnection(ICE_SERVERS);
 
+    const existingSenders = peer.getSenders();
     stream.getTracks().forEach((track) => {
-      peer.addTrack(track, stream);
+      const alreadyAdded = existingSenders.some(s => s.track?.id === track.id);
+      if (!alreadyAdded) {
+        peer.addTrack(track, stream);
+      }
     });
 
     peer.onicecandidate = (event) => {

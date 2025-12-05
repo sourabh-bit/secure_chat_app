@@ -11,6 +11,56 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { eq, and, isNotNull, lt } from 'drizzle-orm';
 import * as schema from '../shared/schema';
 
+// Cloudinary configuration
+const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
+const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY;
+const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET;
+
+const hasCloudinary = !!(CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET);
+
+async function uploadToCloudinary(base64Data: string, resourceType: 'image' | 'video' | 'raw' = 'image'): Promise<string | null> {
+  if (!hasCloudinary) {
+    console.error('Cloudinary not configured');
+    return null;
+  }
+
+  try {
+    const timestamp = Math.floor(Date.now() / 1000);
+    const folder = 'pyqmaster-chat';
+    
+    // Generate signature
+    const signatureString = `folder=${folder}&timestamp=${timestamp}${CLOUDINARY_API_SECRET}`;
+    const signature = crypto.createHash('sha1').update(signatureString).digest('hex');
+
+    const formData = new URLSearchParams();
+    formData.append('file', base64Data);
+    formData.append('timestamp', timestamp.toString());
+    formData.append('folder', folder);
+    formData.append('api_key', CLOUDINARY_API_KEY!);
+    formData.append('signature', signature);
+
+    const response = await fetch(
+      `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/${resourceType}/upload`,
+      {
+        method: 'POST',
+        body: formData,
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.text();
+      console.error('Cloudinary upload failed:', error);
+      return null;
+    }
+
+    const result = await response.json();
+    return result.secure_url;
+  } catch (error) {
+    console.error('Cloudinary upload error:', error);
+    return null;
+  }
+}
+
 interface ClientData {
   ws: WebSocket;
   profile?: { name: string; avatar: string };
@@ -447,6 +497,35 @@ export async function registerRoutes(
     }
 
     res.json({ success: true });
+  });
+
+  // Media upload endpoint (Cloudinary)
+  app.post('/api/upload', async (req, res) => {
+    try {
+      const { data, type } = req.body;
+      
+      if (!data) {
+        return res.status(400).json({ error: 'No data provided' });
+      }
+
+      if (!hasCloudinary) {
+        return res.status(503).json({ 
+          error: 'Media uploads not configured. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET environment variables.' 
+        });
+      }
+
+      const resourceType = type === 'video' ? 'video' : type === 'audio' ? 'raw' : 'image';
+      const url = await uploadToCloudinary(data, resourceType);
+
+      if (!url) {
+        return res.status(500).json({ error: 'Upload failed' });
+      }
+
+      res.json({ url });
+    } catch (error) {
+      console.error('Upload error:', error);
+      res.status(500).json({ error: 'Upload failed' });
+    }
   });
 
   // Fetch chat history from database

@@ -44,7 +44,7 @@ export function useAudioRecorder() {
     }
   }, []);
 
-  const stopRecording = useCallback((): Promise<string> => {
+  const stopRecording = useCallback((): Promise<Blob | null> => {
     return new Promise((resolve) => {
       if (timerRef.current) {
         clearInterval(timerRef.current);
@@ -55,16 +55,12 @@ export function useAudioRecorder() {
         mediaRecorderRef.current.onstop = () => {
           const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
           setAudioBlob(blob);
-          
-          // Convert to base64
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            resolve(reader.result as string);
-          };
-          reader.readAsDataURL(blob);
+          resolve(blob);
         };
         
         mediaRecorderRef.current.stop();
+      } else {
+        resolve(null);
       }
 
       if (streamRef.current) {
