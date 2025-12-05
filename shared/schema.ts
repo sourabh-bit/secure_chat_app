@@ -30,6 +30,7 @@ export const messages = pgTable("messages", {
   id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
   roomId: varchar("room_id").notNull(),
   senderId: varchar("sender_id", { length: 36 }).notNull().references(() => users.id, { onDelete: 'cascade' }),
+  receiverId: varchar("receiver_id", { length: 36 }).references(() => users.id, { onDelete: 'cascade' }),
   messageType: varchar("message_type").notNull().default('text'), // 'text', 'image', 'video', 'audio'
   text: text("text"),
   mediaUrl: text("media_url"),
@@ -38,6 +39,7 @@ export const messages = pgTable("messages", {
   deletedAt: timestamp("deleted_at"),
   deletedById: varchar("deleted_by_id", { length: 36 }).references(() => users.id, { onDelete: 'set null' }),
   expiresAt: timestamp("expires_at"), // For disappearing messages
+  delivered: boolean("delivered").default(false).notNull(), // For offline message delivery
   timestamp: timestamp("timestamp").defaultNow().notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),

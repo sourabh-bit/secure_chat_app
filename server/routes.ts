@@ -574,6 +574,55 @@ export async function registerRoutes(
             }
           });
           
+          // Fetch and deliver pending messages from database
+          const myUserId = myUserType === 'admin' ? adminUserId : friendUserId;
+          if (hasDatabase && db) {
+            try {
+              const pendingDbMessages = await db.query.messages.findMany({
+                where: and(
+                  eq(schema.messages.receiverId, myUserId),
+                  eq(schema.messages.delivered, false),
+                  eq(schema.messages.isDeleted, false)
+                ),
+                orderBy: schema.messages.timestamp,
+              });
+
+              if (pendingDbMessages.length > 0) {
+                const messageIds: string[] = [];
+                for (const msg of pendingDbMessages) {
+                  ws.send(JSON.stringify({
+                    type: "chat-message",
+                    id: msg.id,
+                    text: msg.text,
+                    messageType: msg.messageType,
+                    mediaUrl: msg.mediaUrl,
+                    timestamp: msg.timestamp.getTime(),
+                    senderName: msg.senderId === adminUserId ? 'Admin' : 'Friend',
+                    sender: 'them',
+                    status: 'delivered'
+                  }));
+                  messageIds.push(msg.id);
+                }
+
+                // Mark messages as delivered in database
+                await db.update(schema.messages)
+                  .set({ delivered: true })
+                  .where(eq(schema.messages.receiverId, myUserId));
+
+                // Notify sender(s) that messages were delivered
+                const senderType = myUserType === 'admin' ? 'friend' : 'admin';
+                broadcastToUserType(room, senderType, {
+                  type: 'message-status',
+                  ids: messageIds,
+                  status: 'delivered'
+                });
+              }
+            } catch (error) {
+              console.error('Failed to fetch pending messages:', error);
+            }
+          }
+
+          // Fallback to in-memory pending messages
           const roomPendingKey = `${roomId}_${myUserType}`;
           const pending = pendingMessages.get(roomPendingKey);
           if (pending && pending.length > 0) {
@@ -644,18 +693,30 @@ export async function registerRoutes(
               }
               // For 'after_seen' and 'forever', expiresAt remains null initially
 
+              // Check if peer is online
+              let peerOnlineForDb = false;
+              const peerUserTypeForDb = myUserType === 'admin' ? 'friend' : 'admin';
+              room.clients.forEach((client, clientWs) => {
+                if (client.userType === peerUserTypeForDb && clientWs.readyState === WebSocket.OPEN) {
+                  peerOnlineForDb = true;
+                }
+              });
+
               // Save message to database
               const senderId = myUserType === 'admin' ? adminUserId : friendUserId;
+              const receiverId = myUserType === 'admin' ? friendUserId : adminUserId;
               const messageData = {
                 id: data.id,
                 roomId: currentRoom,
                 senderId,
+                receiverId,
                 messageType: data.messageType || 'text',
                 text: data.text,
                 mediaUrl: data.mediaUrl,
                 replyToId: data.replyToId,
                 expiresAt,
                 timestamp: new Date(data.timestamp),
+                delivered: peerOnlineForDb,
               };
 
               await db.insert(schema.messages).values(messageData);
