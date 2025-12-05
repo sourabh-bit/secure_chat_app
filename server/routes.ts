@@ -8,8 +8,10 @@ import * as crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
-import { eq, and, isNotNull, lt } from 'drizzle-orm';
+import { eq, and, isNotNull, lt, or, inArray, sql } from 'drizzle-orm';
 import * as schema from '../shared/schema';
+
+const FIXED_ROOM_ID = 'secure-room-001';
 
 // Cloudinary configuration
 const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
@@ -623,8 +625,33 @@ export async function registerRoutes(
 
       const userId = userType === 'admin' ? adminUserId : friendUserId;
 
+      // Fetch reply information for messages that have replies
+      const replyIds = dbMessages
+        .filter((msg: any) => msg.replyToId)
+        .map((msg: any) => msg.replyToId);
+      
+      const replyMessages = replyIds.length > 0 ? await db.query.messages.findMany({
+        where: and(
+          eq(schema.messages.roomId, roomId),
+          inArray(schema.messages.id, replyIds)
+        )
+      }) : [];
+
+      const replyMap = new Map(replyMessages.map((r: any) => [r.id, r]));
+
       const formattedMessages = dbMessages.map((msg: any) => {
         const isSender = msg.senderId === userId;
+        const replyTo = msg.replyToId && replyMap.has(msg.replyToId) 
+          ? (() => {
+              const replyMsg = replyMap.get(msg.replyToId);
+              return {
+                id: replyMsg.id,
+                text: replyMsg.text || '',
+                sender: replyMsg.senderId === userId ? 'me' : 'them'
+              };
+            })()
+          : undefined;
+
         return {
           id: msg.id,
           text: msg.text,
@@ -634,6 +661,7 @@ export async function registerRoutes(
           mediaUrl: msg.mediaUrl,
           senderName: msg.senderId === adminUserId ? 'Admin' : 'Friend',
           status: msg.delivered ? 'delivered' : 'sent',
+          replyTo,
         };
       });
 
@@ -704,9 +732,36 @@ export async function registerRoutes(
     }
   });
 
-  const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
+  const wss = new WebSocketServer({ 
+    server: httpServer, 
+    path: "/ws",
+    // Increase ping interval for Render stability
+    perMessageDeflate: false,
+    clientTracking: true
+  });
 
-  wss.on("connection", (ws: WebSocket) => {
+  // WebSocket keepalive ping every 30 seconds to prevent Render timeout
+  const keepAliveInterval = setInterval(() => {
+    wss.clients.forEach((ws: WebSocket & { isAlive?: boolean }) => {
+      if (ws.isAlive === false) {
+        return ws.terminate();
+      }
+      ws.isAlive = false;
+      ws.ping();
+    });
+  }, 30000);
+
+  // Cleanup interval on server shutdown
+  httpServer.on('close', () => {
+    clearInterval(keepAliveInterval);
+  });
+
+  wss.on("connection", (ws: WebSocket & { isAlive?: boolean }) => {
+    // Set up keepalive for this connection
+    ws.isAlive = true;
+    ws.on('pong', () => {
+      ws.isAlive = true;
+    });
     let currentRoom: string | null = null;
     let myProfile: { name: string; avatar: string } | undefined;
     let myUserType: string | undefined;
@@ -769,22 +824,89 @@ export async function registerRoutes(
             }
           });
           
-          // Fetch and deliver pending messages from database
+          // Fetch and sync ALL messages from database for this user
           const myUserId = myUserType === 'admin' ? adminUserId : friendUserId;
           if (hasDatabase && db) {
             try {
-              const pendingDbMessages = await db.query.messages.findMany({
+              // Fetch all messages in the room (both sent and received)
+              const allDbMessages = await db.query.messages.findMany({
                 where: and(
-                  eq(schema.messages.receiverId, myUserId),
-                  eq(schema.messages.delivered, false),
-                  eq(schema.messages.isDeleted, false)
+                  eq(schema.messages.roomId, currentRoom),
+                  eq(schema.messages.isDeleted, false),
+                  // Messages where user is sender OR receiver
+                  or(
+                    eq(schema.messages.senderId, myUserId),
+                    eq(schema.messages.receiverId, myUserId)
+                  )
                 ),
                 orderBy: schema.messages.timestamp,
               });
 
+              // Fetch reply information
+              const replyIds = allDbMessages
+                .filter((msg: any) => msg.replyToId)
+                .map((msg: any) => msg.replyToId);
+              
+              const replyMessages = replyIds.length > 0 ? await db.query.messages.findMany({
+                where: and(
+                  eq(schema.messages.roomId, currentRoom),
+                  inArray(schema.messages.id, replyIds)
+                )
+              }) : [];
+
+              const replyMap = new Map(replyMessages.map((r: any) => [r.id, r]));
+
+              // Send all messages to the client for sync
+              if (allDbMessages.length > 0) {
+                ws.send(JSON.stringify({
+                  type: "sync-messages",
+                  messages: allDbMessages.map((msg: any) => {
+                    const isSender = msg.senderId === myUserId;
+                    const replyTo = msg.replyToId && replyMap.has(msg.replyToId) 
+                      ? (() => {
+                          const replyMsg = replyMap.get(msg.replyToId);
+                          return {
+                            id: replyMsg.id,
+                            text: replyMsg.text || '',
+                            sender: replyMsg.senderId === myUserId ? 'me' : 'them'
+                          };
+                        })()
+                      : undefined;
+
+                    return {
+                      id: msg.id,
+                      text: msg.text,
+                      sender: isSender ? 'me' : 'them',
+                      timestamp: msg.timestamp.getTime(),
+                      type: msg.messageType,
+                      mediaUrl: msg.mediaUrl,
+                      senderName: msg.senderId === adminUserId ? 'Admin' : 'Friend',
+                      status: msg.delivered ? 'delivered' : 'sent',
+                      replyTo,
+                    };
+                  })
+                }));
+              }
+
+              // Fetch and deliver pending messages (undelivered messages)
+              const pendingDbMessages = allDbMessages.filter((msg: any) => 
+                msg.receiverId === myUserId && !msg.delivered
+              );
+
               if (pendingDbMessages.length > 0) {
                 const messageIds: string[] = [];
                 for (const msg of pendingDbMessages) {
+                  const replyTo = msg.replyToId && replyMap.has(msg.replyToId) 
+                    ? (() => {
+                        const replyMsg = replyMap.get(msg.replyToId);
+                        return {
+                          id: replyMsg.id,
+                          text: replyMsg.text || '',
+                          sender: replyMsg.senderId === myUserId ? 'me' : 'them'
+                        };
+                      })()
+                    : undefined;
+
                   ws.send(JSON.stringify({
                     type: "chat-message",
                     id: msg.id,
@@ -794,7 +916,8 @@ export async function registerRoutes(
                     timestamp: msg.timestamp.getTime(),
                     senderName: msg.senderId === adminUserId ? 'Admin' : 'Friend',
                     sender: 'them',
-                    status: 'delivered'
+                    status: 'delivered',
+                    replyTo,
                   }));
                   messageIds.push(msg.id);
                 }
@@ -806,16 +929,23 @@ export async function registerRoutes(
                     .where(eq(schema.messages.id, msgId));
                 }
 
-                // Notify sender(s) that messages were delivered
+                // Notify sender(s) that messages were delivered - broadcast to ALL devices of sender
                 const senderType = myUserType === 'admin' ? 'friend' : 'admin';
-                broadcastToUserType(room, senderType, {
+                const deliveryStatusUpdate = {
                   type: 'message-status',
                   ids: messageIds,
-                  status: 'delivered'
+                  status: 'delivered' as const
+                };
+                
+                // Broadcast to ALL devices of the sender (all admin devices if friend received, all friend devices if admin received)
+                room.clients.forEach((client, clientWs) => {
+                  if (client.userType === senderType && clientWs.readyState === WebSocket.OPEN) {
+                    clientWs.send(JSON.stringify(deliveryStatusUpdate));
+                  }
                 });
               }
             } catch (error) {
-              console.error('Failed to fetch pending messages:', error);
+              console.error('Failed to fetch messages from database:', error);
             }
           }
 
@@ -840,11 +970,19 @@ export async function registerRoutes(
             });
             pendingMessages.delete(roomPendingKey);
             
+            // Broadcast delivery status to ALL devices of sender
             const senderType = myUserType === 'admin' ? 'friend' : 'admin';
-            broadcastToUserType(room, senderType, {
+            const deliveryStatusUpdate = {
               type: 'message-status',
               ids: messageIds,
-              status: 'delivered'
+              status: 'delivered' as const
+            };
+            
+            // Broadcast to ALL devices of the sender
+            room.clients.forEach((client, clientWs) => {
+              if (client.userType === senderType && clientWs.readyState === WebSocket.OPEN) {
+                clientWs.send(JSON.stringify(deliveryStatusUpdate));
+              }
             });
           }
           
@@ -871,7 +1009,44 @@ export async function registerRoutes(
           const room = rooms.get(currentRoom);
           if (!room) return;
 
+          // Validate message data
+          if (!data.id || typeof data.id !== 'string' || data.id.length > 100) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Invalid message ID' }));
+            return;
+          }
+
+          // Sanitize message content
+          const sanitizedText = typeof data.text === 'string' 
+            ? data.text.trim().slice(0, 10000) 
+            : '';
+          const sanitizedMediaUrl = typeof data.mediaUrl === 'string'
+            ? data.mediaUrl.slice(0, 2048)
+            : undefined;
+
+          if (!sanitizedText && !sanitizedMediaUrl && (!data.messageType || data.messageType === 'text')) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Message cannot be empty' }));
+            return;
+          }
+
+          // Validate user type
+          if (!myUserType || (myUserType !== 'admin' && myUserType !== 'friend')) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Invalid user type' }));
+            return;
+          }
+
+          // Validate room ID
+          if (currentRoom !== FIXED_ROOM_ID) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Invalid room ID' }));
+            return;
+          }
+
           try {
+            // Update data with sanitized values
+            const sanitizedData = {
+              ...data,
+              text: sanitizedText,
+              mediaUrl: sanitizedMediaUrl
+            };
             // Save message to database if available
             if (hasDatabase) {
               // Get current retention settings
@@ -902,24 +1077,50 @@ export async function registerRoutes(
               // Save message to database
               const senderId = myUserType === 'admin' ? adminUserId : friendUserId;
               const receiverId = myUserType === 'admin' ? friendUserId : adminUserId;
-              const messageData = {
-                id: data.id,
-                roomId: currentRoom,
-                senderId,
-                receiverId,
-                messageType: data.messageType || 'text',
-                text: data.text,
-                mediaUrl: data.mediaUrl,
-                replyToId: data.replyToId,
-                expiresAt,
-                timestamp: new Date(data.timestamp),
-                delivered: peerOnlineForDb,
-              };
+              
+              // Prevent duplicate message insertion
+              const existingMessage = await db.query.messages.findFirst({
+                where: eq(schema.messages.id, sanitizedData.id)
+              });
 
-              await db.insert(schema.messages).values(messageData);
+              if (!existingMessage) {
+                const messageData = {
+                  id: sanitizedData.id,
+                  roomId: currentRoom,
+                  senderId,
+                  receiverId,
+                  messageType: sanitizedData.messageType || 'text',
+                  text: sanitizedText,
+                  mediaUrl: sanitizedMediaUrl,
+                  replyToId: typeof sanitizedData.replyToId === 'string' && sanitizedData.replyToId.length <= 100 ? sanitizedData.replyToId : null,
+                  expiresAt,
+                  timestamp: new Date(sanitizedData.timestamp || Date.now()),
+                  delivered: peerOnlineForDb,
+                };
+
+                await db.insert(schema.messages).values(messageData);
+              }
             }
 
-            // Broadcast to all sessions of peer users (they receive it as 'them')
+            // STEP 1: IMMEDIATELY send 'sent' status to ALL sender devices (including current device)
+            // This ensures the sender device removes the pending timer right away
+            const sentStatusUpdate = {
+              type: 'message-status',
+              ids: [sanitizedData.id],
+              status: 'sent' as const
+            };
+            
+            // Send to sender's current device FIRST
+            ws.send(JSON.stringify(sentStatusUpdate));
+            
+            // Send to ALL other devices of the same user
+            room.clients.forEach((client, clientWs) => {
+              if (client.userType === myUserType && clientWs !== ws && clientWs.readyState === WebSocket.OPEN) {
+                clientWs.send(JSON.stringify(sentStatusUpdate));
+              }
+            });
+
+            // STEP 2: Check if peer is online and broadcast message to peer
             let peerOnline = false;
             room.clients.forEach((client, clientWs) => {
               if (client.userType !== myUserType && clientWs.readyState === WebSocket.OPEN) {
@@ -927,42 +1128,55 @@ export async function registerRoutes(
                 // Send to peer - explicitly set sender to 'them' so it appears on left side
                 clientWs.send(JSON.stringify({ 
                   type: 'chat-message',
-                  ...data, 
+                  ...sanitizedData, 
                   sender: 'them',
                   status: 'delivered' 
                 }));
               }
             });
 
-            // Broadcast to all other sessions of same user (their own message synced)
+            // STEP 3: If peer is online, immediately update status to 'delivered' on ALL sender devices
+            if (peerOnline) {
+              const deliveredStatusUpdate = {
+                type: 'message-status',
+                ids: [sanitizedData.id],
+                status: 'delivered' as const
+              };
+              
+              // Send to sender's current device
+              ws.send(JSON.stringify(deliveredStatusUpdate));
+              
+              // Send to ALL other devices of the same user
+              room.clients.forEach((client, clientWs) => {
+                if (client.userType === myUserType && clientWs !== ws && clientWs.readyState === WebSocket.OPEN) {
+                  clientWs.send(JSON.stringify(deliveredStatusUpdate));
+                }
+              });
+            }
+
+            // STEP 4: Sync message to sender's other devices (for multi-device sync)
             room.clients.forEach((client, clientWs) => {
               if (client.userType === myUserType && clientWs !== ws && clientWs.readyState === WebSocket.OPEN) {
                 // Mark as 'me' so it appears on the right side for the sender's other devices
                 clientWs.send(JSON.stringify({ 
                   type: 'chat-message',
-                  ...data, 
+                  ...sanitizedData, 
                   sender: 'me', 
                   status: peerOnline ? 'delivered' : 'sent' 
                 }));
               }
             });
-
-            if (peerOnline) {
-              ws.send(JSON.stringify({
-                type: 'message-status',
-                ids: [data.id],
-                status: 'delivered'
-              }));
-            } else {
+            
+            if (!peerOnline) {
               // Send push notification for offline messages
               if (myUserType === 'friend') {
-                const msgPreview = data.messageType === 'text'
-                  ? (data.text?.length > 50 ? data.text.substring(0, 50) + '...' : data.text)
-                  : data.messageType === 'image' ? '📷 Photo'
-                  : data.messageType === 'video' ? '🎥 Video'
-                  : data.messageType === 'audio' ? '🎤 Voice message'
+                const msgPreview = sanitizedData.messageType === 'text'
+                  ? (sanitizedText.length > 50 ? sanitizedText.substring(0, 50) + '...' : sanitizedText)
+                  : sanitizedData.messageType === 'image' ? '📷 Photo'
+                  : sanitizedData.messageType === 'video' ? '🎥 Video'
+                  : sanitizedData.messageType === 'audio' ? '🎤 Voice message'
                   : 'New message';
-                sendPushNotification('admin', `💬 ${data.senderName || 'Friend'}`, msgPreview);
+                sendPushNotification('admin', `💬 ${sanitizedData.senderName || 'Friend'}`, msgPreview);
               }
 
               // Store pending message for offline user (only if no database)
@@ -970,45 +1184,82 @@ export async function registerRoutes(
                 const pendingKey = `${currentRoom}_${myUserType === 'admin' ? 'friend' : 'admin'}`;
                 const pending = pendingMessages.get(pendingKey) || [];
                 pending.push({
-                  id: data.id,
-                  text: data.text,
-                  messageType: data.messageType || 'text',
-                  mediaUrl: data.mediaUrl,
+                  id: sanitizedData.id,
+                  text: sanitizedText,
+                  messageType: sanitizedData.messageType || 'text',
+                  mediaUrl: sanitizedMediaUrl,
                   timestamp: Date.now(),
-                  senderName: data.senderName || myProfile?.name || 'Unknown',
+                  senderName: sanitizedData.senderName || myProfile?.name || 'Unknown',
                   status: 'sent'
                 });
                 pendingMessages.set(pendingKey, pending);
               }
 
-              ws.send(JSON.stringify({
-                type: "message-queued",
-                id: data.id,
-                status: 'sent'
-              }));
             }
           } catch (error) {
             console.error('Failed to save message:', error);
             // Still try to relay the message even if database fails
+            // Use sanitizedData if it exists, otherwise use original data
+            const messageData = sanitizedData || data;
             let peerOnline = false;
             room.clients.forEach((client, clientWs) => {
               if (client.userType !== myUserType && clientWs.readyState === WebSocket.OPEN) {
                 peerOnline = true;
                 clientWs.send(JSON.stringify({ 
                   type: 'chat-message',
-                  ...data, 
+                  ...messageData, 
                   sender: 'them',
                   status: 'delivered' 
                 }));
               }
             });
             
+            // Also sync to other devices of same user
+            room.clients.forEach((client, clientWs) => {
+              if (client.userType === myUserType && clientWs !== ws && clientWs.readyState === WebSocket.OPEN) {
+                clientWs.send(JSON.stringify({ 
+                  type: 'chat-message',
+                  ...messageData, 
+                  sender: 'me', 
+                  status: peerOnline ? 'delivered' : 'sent' 
+                }));
+              }
+            });
+            
+            // STEP 1: IMMEDIATELY send 'sent' status to ALL sender devices
+            const sentStatusUpdate = {
+              type: 'message-status',
+              ids: [messageData.id],
+              status: 'sent' as const
+            };
+            
+            // Send to sender's current device FIRST
+            ws.send(JSON.stringify(sentStatusUpdate));
+            
+            // Send to ALL other devices of the same user
+            room.clients.forEach((client, clientWs) => {
+              if (client.userType === myUserType && clientWs !== ws && clientWs.readyState === WebSocket.OPEN) {
+                clientWs.send(JSON.stringify(sentStatusUpdate));
+              }
+            });
+            
+            // STEP 2: If peer is online, update to 'delivered' on ALL sender devices
             if (peerOnline) {
-              ws.send(JSON.stringify({
+              const deliveredStatusUpdate = {
                 type: 'message-status',
-                ids: [data.id],
-                status: 'delivered'
-              }));
+                ids: [messageData.id],
+                status: 'delivered' as const
+              };
+              
+              // Send to sender's current device
+              ws.send(JSON.stringify(deliveredStatusUpdate));
+              
+              // Send to ALL other devices of the same user
+              room.clients.forEach((client, clientWs) => {
+                if (client.userType === myUserType && clientWs !== ws && clientWs.readyState === WebSocket.OPEN) {
+                  clientWs.send(JSON.stringify(deliveredStatusUpdate));
+                }
+              });
             }
           }
 
@@ -1072,14 +1323,17 @@ export async function registerRoutes(
               }
             }
 
-            // Broadcast read status to all sessions
+            // Broadcast read status to ALL sessions (including sender's devices for sync)
+            const readStatusUpdate = {
+              type: 'message-status',
+              ids: data.ids,
+              status: 'read' as const
+            };
+            
+            // Send to ALL devices in the room (peer and sender's devices)
             room.clients.forEach((client, clientWs) => {
-              if (client.userType !== myUserType && clientWs.readyState === WebSocket.OPEN) {
-                clientWs.send(JSON.stringify({
-                  type: 'message-status',
-                  ids: data.ids,
-                  status: 'read'
-                }));
+              if (clientWs.readyState === WebSocket.OPEN) {
+                clientWs.send(JSON.stringify(readStatusUpdate));
               }
             });
           } catch (error) {
@@ -1155,8 +1409,27 @@ export async function registerRoutes(
           const room = rooms.get(currentRoom)!;
           const targetUserType = myUserType === 'admin' ? 'friend' : 'admin';
           
-          if (type === "typing" || type === "profile-update") {
+          if (type === "typing") {
+            // Broadcast typing status to peer only (not to own devices)
             broadcastToUserType(room, targetUserType, data);
+          } else if (type === "profile-update") {
+            // Broadcast profile update to peer
+            broadcastToUserType(room, targetUserType, data);
+            
+            // Also sync to ALL devices of the same user (including current device) for consistency
+            // Send as 'profile_updated' event so frontend can update own profile
+            const profileUpdatedEvent = {
+              type: 'profile_updated',
+              profile: data.profile,
+              userType: myUserType
+            };
+            
+            room.clients.forEach((client, clientWs) => {
+              if (client.userType === myUserType && clientWs.readyState === WebSocket.OPEN) {
+                // Send to all devices of same user (including sender)
+                clientWs.send(JSON.stringify(profileUpdatedEvent));
+              }
+            });
           } else {
             broadcastToAll(room, data, ws);
           }

@@ -30,6 +30,7 @@ interface Props {
   onSwipeReply: (msg: Message) => void;
 }
 
+// Memoize with custom comparison to prevent unnecessary re-renders
 export default memo(function ChatMessage({
   message: msg,
   isSelected,
@@ -87,6 +88,12 @@ export default memo(function ChatMessage({
 
   const handlePointerUp = useCallback((e: React.PointerEvent) => {
     setIsPressing(false);
+    if (isSwipingPointer && startXPointer !== null) {
+      const deltaX = e.clientX - startXPointer;
+      if (deltaX > swipeThreshold && !replyTriggeredPointer) {
+        onSwipeReply(msg);
+      }
+    }
     if (!replyTriggeredPointer) {
       setSwipeOffsetPointer(0);
     }
@@ -95,7 +102,7 @@ export default memo(function ChatMessage({
     setIsSwipingPointer(false);
     setReplyTriggeredPointer(false);
     longPressHandlers.onPointerUp();
-  }, [longPressHandlers, replyTriggeredPointer]);
+  }, [longPressHandlers, replyTriggeredPointer, isSwipingPointer, startXPointer, swipeThreshold, onSwipeReply, msg]);
 
   const handlePointerCancel = useCallback((e: React.PointerEvent) => {
     setIsPressing(false);
@@ -120,14 +127,14 @@ export default memo(function ChatMessage({
       e.preventDefault();
       const offset = Math.max(0, Math.min(deltaX, 80));
       setSwipeOffsetPointer(offset);
-      if (Math.abs(deltaX) > 35 && !replyTriggeredPointer) {
+      if (deltaX > 35 && !replyTriggeredPointer) {
         setReplyTriggeredPointer(true);
-        onReply(msg);
+        onSwipeReply(msg);
       }
     } else {
       longPressHandlers.onPointerMove(e);
     }
-  }, [startXPointer, startYPointer, isSwipingPointer, replyTriggeredPointer, onReply, msg, longPressHandlers]);
+  }, [startXPointer, startYPointer, isSwipingPointer, replyTriggeredPointer, onSwipeReply, msg, longPressHandlers]);
 
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     setStartX(e.touches[0].clientX);
@@ -148,9 +155,9 @@ export default memo(function ChatMessage({
       e.preventDefault();
       const offset = Math.max(0, Math.min(deltaX, 80)); // Max 80px offset
       setSwipeOffset(offset);
-      if (Math.abs(deltaX) > 35 && !replyTriggered) {
+      if (deltaX > 35 && !replyTriggered) {
         setReplyTriggered(true);
-        onReply(msg);
+        onSwipeReply(msg);
       }
     }
   }, [startX, startY, isSwiping, replyTriggered, onReply, msg]);
@@ -158,15 +165,16 @@ export default memo(function ChatMessage({
   const handleTouchEnd = useCallback((e: React.TouchEvent) => {
     if (isSwiping && startX !== null) {
       const deltaX = e.changedTouches[0].clientX - startX;
-      if (swipeOffset > swipeThreshold) {
-        onReply(msg);
+      if (deltaX > swipeThreshold && !replyTriggered) {
+        onSwipeReply(msg);
       }
     }
     setStartX(null);
     setStartY(null);
     setIsSwiping(false);
     setSwipeOffset(0);
-  }, [isSwiping, startX, swipeOffset, swipeThreshold, onReply, msg]);
+    setReplyTriggered(false);
+  }, [isSwiping, startX, swipeOffset, swipeThreshold, replyTriggered, onSwipeReply, msg]);
 
   const handleMediaClick = useCallback(
     (e: React.MouseEvent) => {

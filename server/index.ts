@@ -24,6 +24,21 @@ app.use(
 
 app.use(express.urlencoded({ extended: false, limit: '50mb' }));
 
+// CORS for Render deployment
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
+  if (req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
     hour: "numeric",
@@ -94,6 +109,10 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || "5000", 10);
+
+  // Increase timeouts for Render WebSocket stability
+  httpServer.keepAliveTimeout = 65000; // 65 seconds (Render default is 60s)
+  httpServer.headersTimeout = 66000; // 66 seconds (must be > keepAliveTimeout)
 
   httpServer.listen(
     {

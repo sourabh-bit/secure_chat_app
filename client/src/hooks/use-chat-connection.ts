@@ -582,6 +582,10 @@ export function useChatConnection(userType: 'admin' | 'friend') {
   }, []);
 
   const handleMessage = useCallback(async (data: any) => {
+    // Prevent processing duplicate messages
+    if (data.id && processedMessageIds.current.has(data.id)) {
+      return;
+    }
     switch (data.type) {
       case 'joined': {
         if (data.peerProfile) {
@@ -659,8 +663,21 @@ export function useChatConnection(userType: 'admin' | 'friend') {
       }
 
       case 'profile-update': {
+        // Update peer profile (when peer updates their profile)
         if (data.profile) {
           setPeerProfile((prev) => ({
+            ...prev,
+            name: data.profile.name,
+            avatar: data.profile.avatar
+          }));
+        }
+        break;
+      }
+
+      case 'profile_updated': {
+        // Update own profile (when user updates profile on another device)
+        if (data.profile && data.userType === userType) {
+          setMyProfile((prev) => ({
             ...prev,
             name: data.profile.name,
             avatar: data.profile.avatar
@@ -678,13 +695,15 @@ export function useChatConnection(userType: 'admin' | 'friend') {
       }
 
       case 'chat-message': {
-        const msgId = data.id || Date.now().toString();
+        const msgId = data.id || `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
         
+        // Prevent duplicate message processing
         if (processedMessageIds.current.has(msgId)) {
           return;
         }
         processedMessageIds.current.add(msgId);
-
+        
+        // Clean up old message IDs to prevent memory leak
         if (processedMessageIds.current.size > 1000) {
           const idsArray = Array.from(processedMessageIds.current);
           processedMessageIds.current = new Set(idsArray.slice(-500));
@@ -797,7 +816,7 @@ export function useChatConnection(userType: 'admin' | 'friend') {
             data.ids.includes(m.id) && m.sender === 'me'
               ? {
                   ...m,
-                  status: data.status as 'delivered' | 'read'
+                  status: data.status as 'sent' | 'delivered' | 'read'
                 }
               : m
           )
@@ -836,7 +855,12 @@ export function useChatConnection(userType: 'admin' | 'friend') {
               .filter((m: any) => !existingIds.has(m.id))
               .map((m: any) => ({
                 ...m,
-                timestamp: new Date(m.timestamp)
+                timestamp: new Date(m.timestamp),
+                replyTo: m.replyTo ? {
+                  id: m.replyTo.id,
+                  text: m.replyTo.text || '',
+                  sender: m.replyTo.sender
+                } : undefined
               }));
 
             if (newMessages.length > 0) {
@@ -872,7 +896,23 @@ export function useChatConnection(userType: 'admin' | 'friend') {
   ]);
 
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+    // Prevent duplicate connections
+    if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) {
+      return;
+    }
+
+    // Clean up any existing connection
+    if (wsRef.current) {
+      try {
+        wsRef.current.onopen = null;
+        wsRef.current.onmessage = null;
+        wsRef.current.onerror = null;
+        wsRef.current.onclose = null;
+        wsRef.current.close();
+      } catch (e) {
+        // Ignore cleanup errors
+      }
+    }
 
     const ws = new WebSocket(getWebSocketUrl());
     wsRef.current = ws;
@@ -934,21 +974,40 @@ export function useChatConnection(userType: 'admin' | 'friend') {
   }, [sendTyping]);
 
   const sendMessage = useCallback((msg: Partial<Message>) => {
+    // Sanitize input
+    const sanitizedText = typeof msg.text === 'string' 
+      ? msg.text.trim().slice(0, 10000) // Max 10k chars
+      : '';
+    
+    if (!sanitizedText && !msg.mediaUrl && msg.type === 'text') {
+      return; // Don't send empty messages
+    }
+
     const now = new Date();
     const newMsg: Message = {
       id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      text: msg.text || '',
+      text: sanitizedText,
       sender: 'me',
       timestamp: now,
       type: msg.type || 'text',
-      mediaUrl: msg.mediaUrl,
-      senderName: myProfileRef.current.name,
-      status: peerConnectedRef.current ? 'sending' : 'sending',
-      replyTo: msg.replyTo
+      mediaUrl: msg.mediaUrl ? String(msg.mediaUrl).slice(0, 2048) : undefined, // Max URL length
+      senderName: myProfileRef.current.name.slice(0, 100), // Max name length
+      status: 'sending',
+      replyTo: msg.replyTo ? {
+        id: String(msg.replyTo.id).slice(0, 100),
+        text: String(msg.replyTo.text || '').slice(0, 500),
+        sender: msg.replyTo.sender
+      } : undefined
     };
 
     processedMessageIds.current.add(newMsg.id);
-    setMessages((prev) => [...prev, newMsg]);
+    setMessages((prev) => {
+      // Prevent duplicate messages in state
+      if (prev.some(m => m.id === newMsg.id)) {
+        return prev;
+      }
+      return [...prev, newMsg];
+    });
     sendTyping(false);
 
     sendSignal({
@@ -1090,9 +1149,26 @@ export function useChatConnection(userType: 'admin' | 'friend') {
     connect();
     return () => {
       cleanupCall();
-      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-      wsRef.current?.close();
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+        typingTimeoutRef.current = null;
+      }
+      if (wsRef.current) {
+        try {
+          wsRef.current.onopen = null;
+          wsRef.current.onmessage = null;
+          wsRef.current.onerror = null;
+          wsRef.current.onclose = null;
+          wsRef.current.close();
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+        wsRef.current = null;
+      }
     };
   }, [connect, cleanupCall]);
 

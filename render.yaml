@@ -8,7 +8,8 @@ services:
   - type: web
     name: secure-chat-app
     runtime: node
-    buildCommand: npm install && npm run build && npm run db:push
+    plan: free
+    buildCommand: npm install && npm run build
     startCommand: node ./dist/index.cjs
     healthCheckPath: /health
     envVars:
@@ -22,3 +23,5 @@ services:
         fromDatabase:
           name: secure-chat-db
           property: connectionString
+    # WebSocket settings for Render
+    autoDeploy: true

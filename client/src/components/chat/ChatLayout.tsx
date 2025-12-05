@@ -196,9 +196,20 @@ export function ChatLayout({
     }
   }, []);
 
+  // Optimize scroll to bottom - only scroll if user is near bottom
   useEffect(() => {
-    scrollToBottom();
-  }, [messages, scrollToBottom]);
+    if (!scrollRef.current || !messagesEndRef.current) return;
+    
+    const container = scrollRef.current;
+    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 200;
+    
+    if (isNearBottom || messages.length === 0) {
+      // Use requestAnimationFrame for smooth scroll
+      requestAnimationFrame(() => {
+        scrollToBottom();
+      });
+    }
+  }, [messages.length, scrollToBottom]); // Only depend on length, not full array
 
   // exit select mode if nothing selected
   useEffect(() => {
@@ -473,7 +484,7 @@ export function ChatLayout({
     }
   }, [tapCount, onLock]);
 
-  // render messages
+  // render messages - memoized to prevent re-renders
   const messagesList = useMemo(
     () =>
       messages.map((msg) => (
@@ -489,8 +500,8 @@ export function ChatLayout({
         />
       )),
     [
-      messages,
-      selectedMessages,
+      messages.length, // Only depend on length to reduce re-renders
+      selectedMessages.size,
       isSelectMode,
       handleSelectMessage,
       handleMessageLongPress,
@@ -517,7 +528,10 @@ export function ChatLayout({
         {showSidebar && (
           <div
             className="fixed inset-0 bg-black/50 z-30 md:hidden"
-            onClick={() => setShowSidebar(false)}
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowSidebar(false);
+            }}
           />
         )}
 
@@ -527,6 +541,7 @@ export function ChatLayout({
             "fixed inset-y-0 left-0 z-40 w-[78%] max-w-xs bg-[#111b21] text-white shadow-2xl transform transition-transform duration-300 ease-out md:hidden",
             showSidebar ? "translate-x-0" : "-translate-x-full"
           )}
+          onClick={(e) => e.stopPropagation()}
         >
           <div className="flex flex-col h-full">
             <div className="p-3 border-b border-white/10">
@@ -921,9 +936,11 @@ export function ChatLayout({
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      setShowSidebar(true);
+                      e.preventDefault();
+                      setShowSidebar((prev) => !prev);
                     }}
-                    className="p-2 rounded-full hover:bg-white/5 md:hidden text-zinc-100"
+                    className="p-2 rounded-full hover:bg-white/5 md:hidden text-zinc-100 z-50"
+                    type="button"
                   >
                     <MoreVertical size={20} />
                   </button>
@@ -1002,7 +1019,7 @@ export function ChatLayout({
           {/* MESSAGES */}
           <div
             ref={scrollRef}
-            className="flex-1 min-h-0 overflow-y-auto px-2 sm:px-4 pt-[calc(env(safe-area-inset-top,0px)+56px)] md:pt-4 pb-16 sm:pb-20 bg-[#0B141A] overscroll-contain"
+            className="flex-1 min-h-0 overflow-y-auto px-2 sm:px-4 pt-[calc(env(safe-area-inset-top,0px)+56px+16px)] md:pt-4 pb-[calc(env(safe-area-inset-bottom,0px)+80px+16px)] sm:pb-[calc(env(safe-area-inset-bottom,0px)+96px+16px)] bg-[#0B141A] overscroll-contain"
             style={{
               WebkitOverflowScrolling: "touch",
               touchAction: isSelectMode ? "none" : "pan-y",
@@ -1044,7 +1061,7 @@ export function ChatLayout({
           </div>
 
           {/* INPUT */}
-          <div className="bg-[#202c33] border-t border-black/40 shrink-0 safe-area-bottom md:relative fixed bottom-0 left-0 right-0 md:bottom-auto md:left-auto md:right-auto z-40 md:z-auto">
+          <div className="bg-[#202c33] border-t border-black/40 shrink-0 safe-area-bottom md:relative fixed bottom-0 left-0 right-0 md:bottom-auto md:left-auto md:right-auto z-40 md:z-auto pt-4 md:pt-0">
             {replyingTo && (
               <div className="px-3 pt-2">
                 <div className="flex items-center gap-2 px-3 py-2 bg-[#18252f] rounded-xl border-l-2 border-emerald-500">

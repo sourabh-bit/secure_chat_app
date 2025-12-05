@@ -7,14 +7,20 @@
     "node": "20.x"
   },
 
-  "scripts": {
-    "dev:client": "vite dev --port 5000",
-    "dev": "tsx server/index.ts",
-    "build": "tsx script/build.ts",
-    "start": "node dist/index.cjs",
-    "check": "tsc",
-    "db:push": "drizzle-kit push"
-  },
+"scripts": {
+  "dev": "tsx server/index.ts",
+  "dev:client": "vite dev --port 5000",
+
+  "build": "vite build && tsx script/build.ts && mkdir -p dist/public && cp -r client/dist/* dist/public/",
+
+  "start": "node dist/index.cjs",
+
+  "check": "tsc",
+  "db:push": "drizzle-kit push"
+}
+
+,
+
 
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

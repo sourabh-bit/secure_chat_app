@@ -1,6 +1,8 @@
 // Service Worker for PWA and Push Notifications
-const CACHE_NAME = 'secure-chat-v4';
+// Version is updated on each build via build script
+const CACHE_NAME = 'secure-chat-v5';
 const OFFLINE_URL = '/';
+const VERSION_CHECK_INTERVAL = 60000; // Check every minute
 
 // Assets to cache for offline
 const CACHE_ASSETS = [
@@ -14,9 +16,11 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       return cache.addAll(CACHE_ASSETS);
+    }).then(() => {
+      // Force activation of new service worker
+      return self.skipWaiting();
     })
   );
-  self.skipWaiting();
 });
 
 // Activate event - clean old caches
@@ -28,9 +32,11 @@ self.addEventListener('activate', (event) => {
           .filter((name) => name !== CACHE_NAME)
           .map((name) => caches.delete(name))
       );
+    }).then(() => {
+      // Take control of all clients immediately
+      return self.clients.claim();
     })
   );
-  event.waitUntil(clients.claim());
 });
 
 // Fetch event - network first for HTML/JS/CSS, cache first for static assets
@@ -142,6 +148,38 @@ self.addEventListener('message', (event) => {
   }
   
   if (event.data && event.data.type === 'SKIP_WAITING') {
-    self.skipWaiting();
+    self.skipWaiting().then(() => {
+      // Notify all clients to reload
+      return self.clients.matchAll().then((clients) => {
+        clients.forEach((client) => {
+          client.postMessage({ type: 'SW_UPDATED' });
+        });
+      });
+    });
+  }
+  
+  if (event.data && event.data.type === 'CHECK_VERSION') {
+    // Check for new version by fetching index.html with cache-busting
+    fetch('/?v=' + Date.now(), { cache: 'no-store' })
+      .then((response) => response.text())
+      .then((html) => {
+        // Extract version from script tag in HTML
+        const versionMatch = html.match(/APP_VERSION\s*=\s*["']([^"']+)["']/);
+        if (versionMatch) {
+          const newVersion = versionMatch[1];
+          const storedVersion = event.data.currentVersion;
+          if (newVersion !== storedVersion) {
+            // New version detected - notify clients
+            self.clients.matchAll().then((clients) => {
+              clients.forEach((client) => {
+                client.postMessage({ type: 'NEW_VERSION_AVAILABLE', version: newVersion });
+              });
+            });
+          }
+        }
+      })
+      .catch(() => {
+        // Ignore errors
+      });
   }
 });
