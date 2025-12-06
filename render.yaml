@@ -4,7 +4,7 @@ services:
     env: node
     plan: free
 
-    buildCommand: "npm install --include=dev && npm run build"
+    buildCommand: "npm install && npm run build"
     startCommand: "npm start"
     autoDeploy: true
 
@@ -17,7 +17,7 @@ services:
         value: production
 
       - key: DATABASE_URL
-        sync: false
+        value: postgresql://neondb_owner:npg_YFt0nV6xBjUJ@ep-patient-dawn-a1bczy22-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require
 
       - key: SESSION_SECRET
         value: 8f3b4d9e27ac1fbf6d8c29e45a7c0b12dfe9834a76b1cd9023af58c41e7d29f4
