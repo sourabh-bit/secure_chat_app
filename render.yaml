@@ -4,7 +4,11 @@ services:
     env: node
     plan: free
 
-    buildCommand: "npm install && npm run build"
+    # 👇 Correct build steps for your project structure
+    buildCommand: |
+      npm install
+      npm run build
+
     startCommand: "npm start"
     autoDeploy: true
 

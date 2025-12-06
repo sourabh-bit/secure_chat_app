@@ -5,14 +5,19 @@
   "engines": {
     "node": "20.x"
   },
-  "scripts": {
+"scripts": {
   "dev": "tsx server/index.ts",
-  "dev:client": "vite dev --port 5000",
-  "build": "vite build && tsx script/build.ts",
-  "start": "node dist/index.cjs",
-  "check": "tsc",
-  "db:push": "drizzle-kit push"
+  "dev:client": "cd client && vite dev",
+
+  "build": "npm run build:client && npm run build:server && npm run copy-client",
+
+  "build:client": "cd client && npm install && npm run build",
+  "copy-client": "mkdir -p dist/public && cp -r client/dist/* dist/public/",
+  "build:server": "tsx script/build.ts",
+
+  "start": "node dist/index.cjs"
 }
+
 ,
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
