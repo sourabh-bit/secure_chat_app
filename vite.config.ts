@@ -64,8 +64,6 @@ export default defineConfig({
       output: {
         manualChunks: {
           "react-vendor": ["react", "react-dom"],
-          "emoji": ["emoji-mart"],
-          "cloudinary": ["cloudinary-react"],
           "ui-vendor": ["lucide-react"],
         },
       },
