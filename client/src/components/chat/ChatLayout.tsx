@@ -322,25 +322,42 @@ export function ChatLayout({
   const compressImage = useCallback(async (file: File, maxWidth = 1600, quality = 0.85): Promise<string> => {
     return new Promise((resolve, reject) => {
       const img = new Image();
+      const objectUrl = URL.createObjectURL(file);
+      
       img.onload = () => {
-        const canvas = document.createElement('canvas');
-        let { width, height } = img;
-        
-        if (width > maxWidth) {
-          height = (height * maxWidth) / width;
-          width = maxWidth;
+        try {
+          URL.revokeObjectURL(objectUrl);
+          const canvas = document.createElement('canvas');
+          let { width, height } = img;
+          
+          if (width > maxWidth) {
+            height = (height * maxWidth) / width;
+            width = maxWidth;
+          }
+          
+          canvas.width = width;
+          canvas.height = height;
+          
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            reject(new Error('Could not get canvas context'));
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          
+          const result = canvas.toDataURL('image/jpeg', quality);
+          resolve(result);
+        } catch (e) {
+          reject(e);
         }
-        
-        canvas.width = width;
-        canvas.height = height;
-        
-        const ctx = canvas.getContext('2d');
-        ctx?.drawImage(img, 0, 0, width, height);
-        
-        resolve(canvas.toDataURL('image/jpeg', quality));
       };
-      img.onerror = reject;
-      img.src = URL.createObjectURL(file);
+      
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error('Failed to load image'));
+      };
+      
+      img.src = objectUrl;
     });
   }, []);
 
@@ -350,16 +367,25 @@ export function ChatLayout({
       
       let base64Data: string;
       
-      if (mediaType === 'image' && file.size > 500 * 1024) {
-        base64Data = await compressImage(file);
-      } else {
-        const reader = new FileReader();
-        const base64Promise = new Promise<string>((resolve, reject) => {
+      const readFileAsBase64 = (): Promise<string> => {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
           reader.onload = () => resolve(reader.result as string);
           reader.onerror = reject;
+          reader.readAsDataURL(file);
         });
-        reader.readAsDataURL(file);
-        base64Data = await base64Promise;
+      };
+      
+      if (mediaType === 'image' && file.size > 500 * 1024) {
+        try {
+          base64Data = await compressImage(file);
+          console.log(`[UPLOAD] Compressed image from ${Math.round(file.size/1024)}KB to ${Math.round(base64Data.length/1024)}KB`);
+        } catch (compressError) {
+          console.warn('[UPLOAD] Compression failed, using original:', compressError);
+          base64Data = await readFileAsBase64();
+        }
+      } else {
+        base64Data = await readFileAsBase64();
       }
       
       const response = await fetch('/api/upload', {
