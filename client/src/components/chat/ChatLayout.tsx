@@ -1020,7 +1020,7 @@ export function ChatLayout({
           {/* MESSAGES */}
           <div
             ref={scrollRef}
-            className="flex-1 min-h-0 overflow-y-auto px-2 sm:px-4 mt-14 md:mt-0 pt-4 pb-[calc(env(safe-area-inset-bottom,0px)+80px+16px)] sm:pb-[calc(env(safe-area-inset-bottom,0px)+96px+16px)] bg-[#0B141A] overscroll-contain"
+            className="flex-1 min-h-0 overflow-y-auto px-2 sm:px-4 pt-[72px] md:pt-4 pb-[calc(env(safe-area-inset-bottom,0px)+80px+16px)] sm:pb-[calc(env(safe-area-inset-bottom,0px)+96px+16px)] bg-[#0B141A] overscroll-contain"
             style={{
               WebkitOverflowScrolling: "touch",
               touchAction: isSelectMode ? "none" : "pan-y",

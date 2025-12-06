@@ -748,6 +748,7 @@ export async function registerRoutes(
     const apiSecret = process.env.CLOUDINARY_API_SECRET;
 
     if (!cloudName || !apiKey || !apiSecret) {
+      console.error("Cloudinary not configured:", { cloudName: !!cloudName, apiKey: !!apiKey, apiSecret: !!apiSecret });
       return res.status(503).json({
         success: false,
         error: "Media upload is disabled (Cloudinary not configured).",
@@ -761,38 +762,44 @@ export async function registerRoutes(
         return res.status(400).json({ success: false, error: "No data provided" });
       }
 
+      console.log(`[UPLOAD] Starting ${type} upload, data length: ${data.length}`);
+
       // Generate signature for signed upload
       const timestamp = Math.floor(Date.now() / 1000);
       const folder = "pyqmaster";
       const resourceType = type === "video" ? "video" : type === "audio" ? "video" : "image";
 
-      // Create signature string
+      // Create signature string (params must be in alphabetical order)
       const signatureString = `folder=${folder}&timestamp=${timestamp}${apiSecret}`;
       const crypto = await import("crypto");
       const signature = crypto.createHash("sha1").update(signatureString).digest("hex");
 
-      // Upload to Cloudinary
-      const formData = new URLSearchParams();
-      formData.append("file", data);
-      formData.append("api_key", apiKey);
-      formData.append("timestamp", timestamp.toString());
-      formData.append("signature", signature);
-      formData.append("folder", folder);
-
+      // Upload to Cloudinary - use JSON body which supports base64 data URLs
       const uploadUrl = `https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`;
 
       const uploadResponse = await fetch(uploadUrl, {
         method: "POST",
-        body: formData,
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          file: data,
+          api_key: apiKey,
+          timestamp: timestamp,
+          signature: signature,
+          folder: folder,
+        }),
       });
 
+      const responseText = await uploadResponse.text();
+      
       if (!uploadResponse.ok) {
-        const errorText = await uploadResponse.text();
-        console.error("Cloudinary upload failed:", errorText);
+        console.error("Cloudinary upload failed:", responseText);
         return res.status(500).json({ success: false, error: "Upload failed" });
       }
 
-      const result = await uploadResponse.json();
+      const result = JSON.parse(responseText);
+      console.log(`[UPLOAD] Success: ${result.secure_url}`);
 
       return res.json({
         success: true,
