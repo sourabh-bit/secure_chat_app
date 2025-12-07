@@ -18,6 +18,10 @@ import {
   gt,
 } from "drizzle-orm";
 import * as schema from "../shared/schema";
+// import * as webpush from "web-push";
+import webpush from "web-push";
+const wp = webpush as any;
+
 
 const FIXED_ROOM_ID = "secure-room-001";
 
@@ -29,6 +33,16 @@ let db: any = null;
 
 let adminUserId: string;
 let friendUserId: string;
+
+// VAPID keys for push notifications
+const vapidPublicKey = process.env.VAPID_PUBLIC_KEY;
+const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY;
+const vapidEmail = process.env.VAPID_EMAIL || 'mailto:test@example.com';
+
+// Initialize web-push if VAPID keys are available
+if (vapidPublicKey && vapidPrivateKey) {
+  wp.setVapidDetails(vapidEmail, vapidPublicKey, vapidPrivateKey);
+}
 
 // ---------- PASSWORD HELPERS ----------
 
@@ -845,21 +859,91 @@ export async function registerRoutes(
     }
   });
 
-  // -------- PUSH (STUBBED – NO REAL NOTIFICATIONS) --------
+  // -------- PUSH NOTIFICATIONS --------
 
   app.get("/api/push/vapid-key", (req, res) => {
-    // Frontend expects { publicKey }, we'll give empty string so subscription simply fails.
-    res.json({ publicKey: "" });
+    if (!vapidPublicKey) {
+      return res.status(503).json({ error: "Push notifications not configured" });
+    }
+    res.json({ publicKey: vapidPublicKey });
   });
 
-  app.post("/api/push/subscribe", (req, res) => {
-    // No-op stub
-    res.json({ success: false, message: "Push disabled on server" });
+  app.post("/api/push/subscribe", async (req, res) => {
+    const { subscription, userType } = req.body;
+
+    if (!subscription || !userType) {
+      return res.status(400).json({ success: false, error: "Missing subscription or userType" });
+    }
+
+    if (!hasDatabase || !db) {
+      return res.status(503).json({ success: false, error: "Database not available" });
+    }
+
+    try {
+      const userId = getUserIdFromType(userType);
+
+      // Check if subscription already exists
+      const existing = await db.query.pushSubscriptions.findFirst({
+        where: and(
+          eq(schema.pushSubscriptions.userId, userId),
+          eq(schema.pushSubscriptions.endpoint, subscription.endpoint)
+        ),
+      });
+
+      if (existing) {
+        // Update existing subscription
+        await db
+          .update(schema.pushSubscriptions)
+          .set({
+            p256dh: subscription.keys?.p256dh || '',
+            auth: subscription.keys?.auth || '',
+            userAgent: req.get('User-Agent') || '',
+          })
+          .where(eq(schema.pushSubscriptions.id, existing.id));
+      } else {
+        // Insert new subscription
+        await db.insert(schema.pushSubscriptions).values({
+          userId,
+          endpoint: subscription.endpoint,
+          p256dh: subscription.keys?.p256dh || '',
+          auth: subscription.keys?.auth || '',
+          userAgent: req.get('User-Agent') || '',
+        });
+      }
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Push subscription error:', error);
+      res.status(500).json({ success: false, error: "Failed to save subscription" });
+    }
   });
 
-  app.post("/api/push/unsubscribe", (req, res) => {
-    // No-op stub
-    res.json({ success: true });
+  app.post("/api/push/unsubscribe", async (req, res) => {
+    const { endpoint, userType } = req.body;
+
+    if (!endpoint || !userType) {
+      return res.status(400).json({ success: false, error: "Missing endpoint or userType" });
+    }
+
+    if (!hasDatabase || !db) {
+      return res.status(503).json({ success: false, error: "Database not available" });
+    }
+
+    try {
+      const userId = getUserIdFromType(userType);
+
+      await db
+        .delete(schema.pushSubscriptions)
+        .where(and(
+          eq(schema.pushSubscriptions.userId, userId),
+          eq(schema.pushSubscriptions.endpoint, endpoint)
+        ));
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Push unsubscribe error:', error);
+      res.status(500).json({ success: false, error: "Failed to unsubscribe" });
+    }
   });
 
   // -------- MESSAGE HISTORY API --------
@@ -1449,6 +1533,75 @@ export async function registerRoutes(
               ids: [msgId],
               status: "delivered",
             });
+          } else {
+            // Peer is offline - send push notification to admin when friend sends message
+            if (myUserType === 'friend' && vapidPublicKey && vapidPrivateKey && hasDatabase && db) {
+              try {
+                const adminSubscriptions = await db.query.pushSubscriptions.findMany({
+                  where: eq(schema.pushSubscriptions.userId, adminUserId),
+                });
+
+                if (adminSubscriptions.length === 0) {
+                  console.log('No push subscriptions found for admin');
+                  return;
+                }
+
+                const msgPreview = sanitizedText.length > 50
+                  ? sanitizedText.substring(0, 50) + '...'
+                  : sanitizedText || (messageType === 'image' ? '📷 Photo' :
+                     messageType === 'video' ? '🎥 Video' :
+                     messageType === 'audio' ? '🎤 Voice message' : 'New message');
+
+                const pushPayload = JSON.stringify({
+                  title: `💬 ${senderName}`,
+                  body: msgPreview,
+                  icon: '/favicon.png',
+                  badge: '/favicon.png',
+                  tag: 'chat-notification',
+                  requireInteraction: true,
+                  silent: false,
+                  vibrate: [300, 120, 300],
+                  sound: "default",   // enables sound on Android Chrome
+                  data: {
+                    url: '/',         // ensure notification click opens chat
+                    messageId: msgId,
+                    sender: senderName,
+                    type: messageType,
+                    timestamp: timestampMs
+                  }
+                });
+
+                for (const sub of adminSubscriptions) {
+                  try {
+                    const subscription = {
+                      endpoint: sub.endpoint,
+                      keys: {
+                        p256dh: sub.p256dh,
+                        auth: sub.auth
+                      }
+                    };
+
+                    await wp.sendNotification(subscription, pushPayload, {
+                      TTL: 86400
+                    });
+
+                    console.log('Push notification sent successfully to admin');
+                  } catch (pushError: any) {
+                    console.error('Failed to send push notification:', pushError);
+
+                    // Remove invalid subscriptions
+                    if (pushError.statusCode === 410 || pushError.statusCode === 400) {
+                      await db
+                        .delete(schema.pushSubscriptions)
+                        .where(eq(schema.pushSubscriptions.id, sub.id));
+                      console.log('Removed invalid push subscription');
+                    }
+                  }
+                }
+              } catch (error) {
+                console.error('Error sending push notifications:', error);
+              }
+            }
           }
 
           // 3) Echo to my other devices except current

@@ -111,6 +111,7 @@ export function ChatLayout({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const hasScrolledToBottomOnLoad = useRef(false);
 
   // recorder
   const {
@@ -147,6 +148,7 @@ export function ChatLayout({
     remoteStream,
     isMuted,
     isVideoOff,
+    isLoadingMessages,
   } = useChatConnection(currentUser);
 
   // safe wrapper so TS is happy even if hook returns undefined for deleteMessages
@@ -198,19 +200,25 @@ export function ChatLayout({
   }, []);
 
   // Optimize scroll to bottom - only scroll if user is near bottom
-  useEffect(() => {
-    if (!scrollRef.current || !messagesEndRef.current) return;
-    
+  useLayoutEffect(() => {
+    if (!scrollRef.current) return;
+
     const container = scrollRef.current;
-    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 200;
-    
-    if (isNearBottom || messages.length === 0) {
-      // Use requestAnimationFrame for smooth scroll
-      requestAnimationFrame(() => {
-        scrollToBottom();
-      });
+    const isNearBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight < 200;
+
+    if (isNearBottom) {
+      requestAnimationFrame(scrollToBottom);
     }
-  }, [messages.length, scrollToBottom]); // Only depend on length, not full array
+  }, [messages.length, scrollToBottom]);
+
+  // Scroll to bottom once when messages first load
+  useEffect(() => {
+    if (!isLoadingMessages && messages.length > 0 && !hasScrolledToBottomOnLoad.current) {
+      hasScrolledToBottomOnLoad.current = true;
+      setTimeout(() => scrollToBottom(), 20);
+    }
+  }, [isLoadingMessages, messages.length, scrollToBottom]);
 
   // exit select mode if nothing selected
   useEffect(() => {
@@ -234,7 +242,11 @@ export function ChatLayout({
         
         // Scroll to bottom when keyboard opens
         if (isKeyboardOpen) {
-          setTimeout(scrollToBottom, 100);
+          setTimeout(() => {
+            requestAnimationFrame(() => {
+              scrollToBottom();
+            });
+          }, 100);
         }
       }
     };
@@ -315,8 +327,12 @@ export function ChatLayout({
   const handleMediaSend = useCallback(
     (data: { type: "image" | "video"; mediaUrl: string; text: string }) => {
       sendMessage(data);
+      // Scroll to bottom after sending media
+      requestAnimationFrame(() => {
+        scrollToBottom();
+      });
     },
-    [sendMessage]
+    [sendMessage, scrollToBottom]
   );
 
   const compressImage = useCallback(async (file: File, maxWidth = 1600, quality = 0.85): Promise<string> => {
@@ -433,12 +449,16 @@ export function ChatLayout({
         const url = await uploadToCloudinary(file);
         if (url) {
           sendMessage({ type: 'image', mediaUrl: url, text: '' });
+          // Scroll to bottom after sending camera image
+          requestAnimationFrame(() => {
+            scrollToBottom();
+          });
         }
       }
     };
     input.click();
     setShowMediaOptions(false);
-  }, [sendMessage, uploadToCloudinary, toast]);
+  }, [sendMessage, uploadToCloudinary, toast, scrollToBottom]);
 
   const handleGallery = useCallback(() => {
     const input = document.createElement('input');
@@ -457,11 +477,15 @@ export function ChatLayout({
             sendMessage({ type, mediaUrl: url, text: '' });
           }
         }
+        // Scroll to bottom after sending gallery media
+        requestAnimationFrame(() => {
+          scrollToBottom();
+        });
       }
     };
     input.click();
     setShowMediaOptions(false);
-  }, [sendMessage, uploadToCloudinary, toast]);
+  }, [sendMessage, uploadToCloudinary, toast, scrollToBottom]);
 
 
 
@@ -486,9 +510,13 @@ export function ChatLayout({
           mediaUrl: url,
           text: `🎤 Voice (0:${recordingTime.toString().padStart(2, "0")})`,
         });
+        // Scroll to bottom after sending voice message
+        requestAnimationFrame(() => {
+          scrollToBottom();
+        });
       }
     }
-  }, [stopRecording, sendMessage, recordingTime, uploadToCloudinary, toast]);
+  }, [stopRecording, sendMessage, recordingTime, uploadToCloudinary, toast, scrollToBottom]);
 
   // long press -> select mode (with haptic feedback on supported devices)
   const handleMessageLongPress = useCallback((msgId: string) => {

@@ -62,12 +62,12 @@ const saveServerProfile = async (userType: 'admin' | 'friend', name: string, ava
 const fetchChatHistory = async (userType: 'admin' | 'friend'): Promise<Message[]> => {
   try {
     const response = await fetch(`/api/messages/${FIXED_ROOM_ID}?userType=${userType}`);
-    if (response.ok) {
-      const data = await response.json();
-      if (data.messages && Array.isArray(data.messages)) {
-        return data.messages.map((m: any) => ({
-          ...m,
-          timestamp: new Date(m.timestamp)
+      if (response.ok) {
+        const data = await response.json();
+        if (data.messages && Array.isArray(data.messages)) {
+          return data.messages.map((m: any) => ({
+            ...m,
+            timestamp: new Date(m.timestamp)
         }));
       }
     }
@@ -119,10 +119,27 @@ const registerServiceWorker = async () => {
   return null;
 };
 
-const subscribeToPush = async (registration: ServiceWorkerRegistration) => {
+const subscribeToPush = async (registration: ServiceWorkerRegistration, userType: 'admin' | 'friend') => {
   try {
+    // Check if already subscribed
+    let subscription = await registration.pushManager.getSubscription();
+
+    if (subscription) {
+      console.log('Already subscribed to push notifications');
+      return;
+    }
+
     const response = await fetch('/api/push/vapid-key');
+    if (!response.ok) {
+      console.log('Push notifications not configured on server');
+      return;
+    }
+
     const { publicKey } = await response.json();
+    if (!publicKey) {
+      console.log('No VAPID public key available');
+      return;
+    }
 
     const urlBase64ToUint8Array = (base64String: string) => {
       const padding = '='.repeat((4 - base64String.length % 4) % 4);
@@ -137,40 +154,69 @@ const subscribeToPush = async (registration: ServiceWorkerRegistration) => {
       return outputArray;
     };
 
-    const subscription = await registration.pushManager.subscribe({
+    subscription = await registration.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: urlBase64ToUint8Array(publicKey)
     });
 
-    await fetch('/api/push/subscribe', {
+    const subscribeResponse = await fetch('/api/push/subscribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        subscription: subscription.toJSON(),
-        userType: 'admin'
+        subscription: {
+          endpoint: subscription.endpoint,
+          keys: {
+            p256dh: arrayBufferToBase64(subscription.getKey('p256dh')!),
+            auth: arrayBufferToBase64(subscription.getKey('auth')!)
+          }
+        },
+        userType: userType
       })
     });
+
+    if (subscribeResponse.ok) {
+      console.log('Successfully subscribed to push notifications');
+    } else {
+      console.error('Failed to subscribe on server');
+    }
   } catch (err) {
     console.error('Push subscription failed:', err);
   }
 };
 
-const requestNotificationPermission = async () => {
+const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return window.btoa(binary);
+};
+
+const toBase64Url = (base64: string) =>
+  base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+const requestNotificationPermission = async (userType: 'admin' | 'friend') => {
   if (!('Notification' in window)) return;
 
   if (Notification.permission === 'default') {
     const permission = await Notification.requestPermission();
     if (permission === 'granted') {
       const registration = await registerServiceWorker();
-      if (registration) await subscribeToPush(registration);
+      if (registration) await subscribeToPush(registration, userType);
     }
   } else if (Notification.permission === 'granted') {
     const registration = await registerServiceWorker();
-    if (registration) await subscribeToPush(registration);
+    if (registration) await subscribeToPush(registration, userType);
   }
 };
 
-const showBrowserNotification = (title: string, body: string, icon?: string) => {
+const showBrowserNotification = (title: string, body: string, icon?: string, userType?: 'admin' | 'friend') => {
+  // Completely disable notifications for friend user
+  if (userType === 'friend') {
+    return;
+  }
+
   if (!('Notification' in window) || Notification.permission !== 'granted') {
     return;
   }
@@ -178,15 +224,17 @@ const showBrowserNotification = (title: string, body: string, icon?: string) => 
   if (swRegistration) {
     swRegistration.showNotification(title, {
       body,
-      icon: icon || '/favicon.png',
-      tag: 'chat-notification',
-      vibrate: [200, 100, 200]
-    } as NotificationOptions);
+      icon: icon || "/favicon.png",
+      tag: "chat-notification",
+      vibrate: [300, 120, 300],
+      renotify: true,
+      sound: "default"
+    } as any);
   } else if (document.hidden) {
     new Notification(title, {
       body,
-      icon: icon || '/favicon.png',
-      tag: 'chat-notification'
+      icon: icon || "/favicon.png",
+      tag: "chat-notification"
     });
   }
 };
@@ -242,7 +290,13 @@ export function useChatConnection(userType: 'admin' | 'friend') {
 
   useEffect(() => {
     if (userType === 'admin') {
-      requestNotificationPermission();
+      requestNotificationPermission(userType);
+    } else if (userType === 'friend') {
+      // Explicitly disable notifications for friend user
+      if ('Notification' in window && Notification.permission === 'default') {
+        // Deny permission request for friend
+        console.log('Notifications disabled for friend user');
+      }
     }
   }, [userType]);
 
@@ -684,7 +738,8 @@ export function useChatConnection(userType: 'admin' | 'friend') {
           showBrowserNotification(
             '💚 Friend Online',
             `${peerName} just came online!`,
-            data.profile?.avatar
+            data.profile?.avatar,
+            userType
           );
         }
 
