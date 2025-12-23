@@ -16,6 +16,7 @@ import {
   isNotNull,
   lt,
   gt,
+  sql,
 } from "drizzle-orm";
 import * as schema from "../shared/schema";
 // import * as webpush from "web-push";
@@ -33,6 +34,9 @@ let db: any = null;
 
 let adminUserId: string;
 let friendUserId: string;
+
+// Lazy cleanup time guard
+let lastCleanupTime = 0;
 
 // VAPID keys for push notifications
 const vapidPublicKey = process.env.VAPID_PUBLIC_KEY;
@@ -529,6 +533,16 @@ export async function registerRoutes(
         }
 
         const isValid = await verifyPassword(password, user.password);
+
+        // Lazy cleanup on user login
+        if (isValid) {
+          const now = Date.now();
+          if (hasDatabase && db && now - lastCleanupTime > 60 * 60 * 1000) {
+            await cleanupExpiredMessages();
+            lastCleanupTime = now;
+          }
+        }
+
         return res.json({
           success: isValid,
           userType: isValid ? userType : null,
@@ -1345,6 +1359,13 @@ export async function registerRoutes(
             } catch (err) {
               console.error("Failed to sync messages on join:", err);
             }
+
+            // Lazy cleanup: run at most once per hour
+            const now = Date.now();
+            if (hasDatabase && db && now - lastCleanupTime > 60 * 60 * 1000) {
+              await cleanupExpiredMessages();
+              lastCleanupTime = now;
+            }
           } else {
             // No DB: send pending in-memory messages
             const pendingKey = `${currentRoom}_${myUserType}`;
@@ -1379,6 +1400,13 @@ export async function registerRoutes(
         // ---------- SEND MESSAGE ----------
         } else if (type === "send-message" && currentRoom) {
           if (!myUserType || !myUserId) return;
+
+          // Lazy cleanup: run at most once per hour
+          const now = Date.now();
+          if (hasDatabase && db && now - lastCleanupTime > 60 * 60 * 1000) {
+            await cleanupExpiredMessages();
+            lastCleanupTime = now;
+          }
 
           const peerUserType =
             myUserType === "admin" ? "friend" : "admin";
@@ -1923,9 +1951,28 @@ export async function registerRoutes(
     }
   };
 
-  // -------- INIT DB + CLEANUP LOOP --------
+  // -------- ENSURE INDEXES --------
 
-  initializeDatabase().then(() => {
+  const ensureIndexes = async () => {
+    if (!hasDatabase || !db) return;
+
+    try {
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_messages_room_deleted_timestamp ON messages(room_id, is_deleted, timestamp)`);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_messages_expires_at ON messages(expires_at) WHERE expires_at IS NOT NULL`);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_message_reads_message_user ON message_reads(message_id, user_id)`);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)`);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_sync_states_session_id ON sync_states(session_id)`);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_typing_indicators_room_id ON typing_indicators(room_id)`);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_id ON push_subscriptions(user_id)`);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_message_retention_room_id ON message_retention(room_id)`);
+    } catch (error) {
+      console.error("Error creating indexes:", error);
+    }
+  };
+
+  // -------- INIT DB + INDEXES --------
+
+  initializeDatabase().then(async () => {
     console.log(
       "[DB] hasDatabase=",
       hasDatabase,
@@ -1934,10 +1981,7 @@ export async function registerRoutes(
       "friendUserId=",
       friendUserId
     );
-    if (hasDatabase && db) {
-      setInterval(cleanupExpiredMessages, 5 * 60 * 1000);
-      cleanupExpiredMessages();
-    }
+    await ensureIndexes();
   });
 
   return httpServer;
